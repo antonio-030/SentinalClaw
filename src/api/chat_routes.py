@@ -164,11 +164,13 @@ def _detect_scan_command(message: str) -> tuple[bool, str | None]:
 
 
 def _is_findings_question(message: str) -> bool:
-    """Erkennt ob eine Nachricht eine Frage zu Ergebnissen/Findings ist."""
+    """Erkennt ob eine Nachricht eine Frage zu Scan-Ergebnissen ist."""
     keywords = re.compile(
         r"\b(finding|ergebnis|resultat|schwachstelle|vulnerability|vuln|"
-        r"was wurde gefunden|zeige|show|report|bericht|zusammenfassung|summary|"
-        r"critical|high|medium|low|cve|port|service|analyse|analysis)\b",
+        r"was wurde gefunden|was gefunden|zeige|show|report|bericht|zusammenfassung|summary|"
+        r"critical|high|medium|low|cve|port|service|analyse|analysis|"
+        r"stand|status|scan.?job|letzter?.scan|wie.?(?:weit|lief|läuft|geht)|"
+        r"fortschritt|progress|gefunden|entdeckt|ergebnis|offen|ports?)\b",
         re.IGNORECASE,
     )
     return bool(keywords.search(message))
@@ -266,38 +268,93 @@ async def _start_scan_from_chat(target: str, scan_id_ref: list[str]) -> None:
 
 
 async def _build_findings_context(scan_id: str | None = None) -> str:
-    """Baut Kontext-String aus DB-Findings fuer Claude-Prompt."""
+    """Baut Kontext-String aus DB-Daten fuer Claude-Prompt.
+
+    Enthält: Letzter Scan-Job, Phasen, Findings, offene Ports.
+    """
+    from uuid import UUID
+
     from src.shared.finding_repository import FindingRepository
+    from src.shared.phase_repositories import OpenPortRepository, ScanPhaseRepository
     from src.shared.repositories import ScanJobRepository
 
     db = await _get_db()
     finding_repo = FindingRepository(db)
     scan_repo = ScanJobRepository(db)
+    phase_repo = ScanPhaseRepository(db)
+    port_repo = OpenPortRepository(db)
 
     context_parts = []
 
+    # Scan-Job laden (spezifischer oder letzter)
+    job = None
     if scan_id:
-        from uuid import UUID
-        findings = await finding_repo.list_by_scan(UUID(scan_id))
         job = await scan_repo.get_by_id(UUID(scan_id))
-        if job:
-            context_parts.append(
-                f"Scan: {job.target} (Status: {job.status}, Typ: {job.scan_type})"
-            )
     else:
-        # Letzte Findings ueber alle Scans
+        # Letzten Scan finden
+        all_scans = await scan_repo.list_all(limit=5)
+        if all_scans:
+            job = all_scans[0]
+            scan_id = str(job.id)
+
+    if job:
+        duration = ""
+        if job.started_at and job.completed_at:
+            delta = (job.completed_at - job.started_at).total_seconds()
+            duration = f", Dauer: {delta:.0f}s"
+
+        context_parts.append(
+            f"## Letzter Scan\n"
+            f"- Ziel: {job.target}\n"
+            f"- Status: {job.status}\n"
+            f"- Typ: {job.scan_type}\n"
+            f"- Tokens: {job.tokens_used}{duration}\n"
+            f"- Erstellt: {job.created_at.isoformat()}"
+        )
+
+        # Phasen laden
+        phases = await phase_repo.list_by_scan(UUID(scan_id))
+        if phases:
+            context_parts.append(f"\n## Phasen ({len(phases)}):")
+            for p in phases:
+                context_parts.append(
+                    f"- Phase {p['phase_number']}: {p['name']} → {p['status']}"
+                    f" ({p['duration_seconds']:.1f}s, {p['hosts_found']}H {p['ports_found']}P {p['findings_found']}F)"
+                )
+
+        # Offene Ports laden
+        ports = await port_repo.list_by_scan(UUID(scan_id))
+        if ports:
+            context_parts.append(f"\n## Offene Ports ({len(ports)}):")
+            for p in ports[:15]:
+                context_parts.append(
+                    f"- {p['host_address']}:{p['port']}/{p['protocol']} {p['service']} {p['version']}"
+                )
+
+        # Findings laden
+        findings = await finding_repo.list_by_scan(UUID(scan_id))
+    else:
         findings = await finding_repo.list_all(limit=50)
 
     if findings:
-        context_parts.append(f"\n{len(findings)} Findings gefunden:\n")
-        for f in findings[:20]:  # Max 20 fuer den Kontext
+        # Severity-Zusammenfassung
+        sev_counts: dict[str, int] = {}
+        for f in findings:
+            sev = f.severity.upper()
+            sev_counts[sev] = sev_counts.get(sev, 0) + 1
+
+        context_parts.append(
+            f"\n## Findings ({len(findings)}): "
+            + ", ".join(f"{count}x {sev}" for sev, count in sev_counts.items())
+        )
+        for f in findings[:20]:
+            cve = f" ({f.cve_id})" if f.cve_id else ""
+            port = f":{f.target_port}" if f.target_port else ""
             context_parts.append(
-                f"- [{f.severity.upper()}] {f.title} auf {f.target_host}"
-                f"{f':' + str(f.target_port) if f.target_port else ''}"
-                f"{' (CVE: ' + f.cve_id + ')' if f.cve_id else ''}"
+                f"- [{f.severity.upper()} CVSS:{f.cvss_score}] {f.title} — {f.target_host}{port}{cve}"
             )
     else:
-        context_parts.append("Keine Findings in der Datenbank vorhanden.")
+        context_parts.append("\nKeine Findings vorhanden.")
 
     return "\n".join(context_parts)
 
@@ -388,16 +445,18 @@ async def _process_chat_message(message: str, scan_id: str | None) -> ChatRespon
             scan_id=new_scan_id,
         )
 
-    # 2. Fragen zu Findings/Ergebnissen
+    # 2. Fragen zu Scan-Ergebnissen/Findings/Stand
     if _is_findings_question(message):
         context = await _build_findings_context(scan_id)
         prompt = (
             f"Du bist der SentinelClaw Security-Agent. "
-            f"Beantworte die folgende Frage auf Basis der Scan-Ergebnisse.\n\n"
-            f"Kontext:\n{context}\n\n"
-            f"Frage: {message}\n\n"
-            f"Antworte auf Deutsch, praezise und hilfreich. "
-            f"Nutze Markdown-Formatierung."
+            f"Beantworte die Frage NUR auf Basis der folgenden Scan-Daten aus der Datenbank. "
+            f"NICHT über das Projekt oder den Quellcode sprechen — nur über die echten Scan-Ergebnisse.\n\n"
+            f"=== SCAN-DATEN AUS DER DATENBANK ===\n{context}\n=== ENDE DATEN ===\n\n"
+            f"Frage des Benutzers: {message}\n\n"
+            f"Antworte auf Deutsch, praezise. Beziehe dich auf konkrete Findings, "
+            f"Ports, Hosts und CVEs aus den Daten oben. "
+            f"Nutze Markdown-Formatierung. Halte dich kurz."
         )
 
         response_text = await _ask_claude(prompt)
