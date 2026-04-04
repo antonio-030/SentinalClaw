@@ -139,3 +139,20 @@ export interface CompareResult {
   new_ports: ComparePort[];
   closed_ports: ComparePort[];
 }
+
+// ── Chat ────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'agent' | 'system';
+  content: string;
+  message_type: string;
+  created_at: string;
+  scan_id?: string;
+}
+
+export interface ChatResponse {
+  response: string;
+  scan_started: boolean;
+  scan_id?: string;
+}

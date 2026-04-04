@@ -1,12 +1,14 @@
-import { Shield, Zap, Menu } from 'lucide-react';
+import { Shield, Zap, Menu, MessageSquare } from 'lucide-react';
 import { useKill } from '../../hooks/useApi';
 
 interface TopBarProps {
   systemOnline: boolean;
   onMenuToggle?: () => void;
+  chatOpen?: boolean;
+  onChatToggle?: () => void;
 }
 
-export function TopBar({ systemOnline, onMenuToggle }: TopBarProps) {
+export function TopBar({ systemOnline, onMenuToggle, chatOpen, onChatToggle }: TopBarProps) {
   const killMutation = useKill();
 
   function handleKill() {
@@ -36,8 +38,22 @@ export function TopBar({ systemOnline, onMenuToggle }: TopBarProps) {
         <span className="hidden sm:inline text-[10px] font-medium text-text-tertiary tracking-widest uppercase">v0.1</span>
       </div>
 
-      {/* Rechts: Status + Kill */}
+      {/* Rechts: Chat-Toggle + Status + Kill */}
       <div className="flex items-center gap-2 sm:gap-4">
+        {/* Chat-Toggle-Button */}
+        <button
+          onClick={onChatToggle}
+          className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors ${
+            chatOpen
+              ? 'bg-accent/15 text-accent'
+              : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
+          }`}
+          aria-label="Agent Chat"
+        >
+          <MessageSquare size={14} strokeWidth={2} />
+          <span>Chat</span>
+        </button>
+
         <div className="flex items-center gap-1.5 text-xs text-text-secondary">
           <span className={`h-2 w-2 rounded-full shrink-0 ${
             systemOnline

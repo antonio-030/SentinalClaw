@@ -152,6 +152,17 @@ CREATE INDEX IF NOT EXISTS idx_scan_results_scan ON scan_results(scan_job_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_logs_scan ON agent_logs(scan_job_id);
+
+-- Chat-Nachrichten (Agent-Chat-System)
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id              TEXT PRIMARY KEY,
+    scan_id         TEXT,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    message_type    TEXT DEFAULT 'text',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_scan ON chat_messages(scan_id);
 """
 
 

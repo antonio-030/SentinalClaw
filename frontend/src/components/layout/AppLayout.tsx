@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { MessageSquare } from 'lucide-react';
 import { useStatus } from '../../hooks/useApi';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
+import { ChatPanel } from '../chat/ChatPanel';
 
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   const { data: status } = useStatus();
 
@@ -17,9 +20,11 @@ export function AppLayout() {
       <TopBar
         systemOnline={systemOnline}
         onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
+        chatOpen={chatOpen}
+        onChatToggle={() => setChatOpen(!chatOpen)}
       />
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Mobile Overlay */}
+        {/* Mobile Overlay — Sidebar */}
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-30 bg-black/60 lg:hidden"
@@ -43,7 +48,21 @@ export function AppLayout() {
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           <Outlet />
         </main>
+
+        {/* Chat Panel — Desktop: rechtes Panel, Mobile: Slide-Over */}
+        <ChatPanel isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       </div>
+
+      {/* Mobile: Chat-Bubble-Button (unten rechts, nur wenn Chat geschlossen) */}
+      {!chatOpen && (
+        <button
+          onClick={() => setChatOpen(true)}
+          className="fixed bottom-5 right-5 z-30 lg:hidden flex items-center justify-center w-14 h-14 rounded-full bg-accent text-white shadow-lg shadow-accent/25 hover:bg-accent/90 active:scale-95 transition-all"
+          aria-label="Chat oeffnen"
+        >
+          <MessageSquare size={22} strokeWidth={2} />
+        </button>
+      )}
     </div>
   );
 }

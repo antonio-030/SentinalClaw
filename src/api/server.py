@@ -73,6 +73,7 @@ app.add_middleware(
 
 # ─── Router einbinden ─────────────────────────────────────────────
 
+from src.api.chat_routes import router as chat_router  # noqa: E402
 from src.api.finding_routes import router as finding_router  # noqa: E402
 from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E402
 from src.api.scan_routes import router as scan_router  # noqa: E402
@@ -80,6 +81,7 @@ from src.api.scan_routes import router as scan_router  # noqa: E402
 app.include_router(scan_router)
 app.include_router(scan_detail_router)
 app.include_router(finding_router)
+app.include_router(chat_router)
 
 
 # ─── Request/Response Modelle ──────────────────────────────────────

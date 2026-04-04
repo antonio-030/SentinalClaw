@@ -5,6 +5,8 @@
 
 import type {
   AuditEntry,
+  ChatMessage,
+  ChatResponse,
   CompareResult,
   CreateScanRequest,
   CreateScanResponse,
@@ -149,4 +151,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+
+  // ── Chat ──────────────────────────────────────────────────────────
+
+  chat: {
+    /** POST /api/v1/chat — send message to agent, get response */
+    send: (message: string, scanId?: string) =>
+      fetchJson<ChatResponse>('/api/v1/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message, scan_id: scanId }),
+      }),
+
+    /** GET /api/v1/chat/history — get chat messages, optionally filtered by scan_id */
+    history: (scanId?: string) =>
+      fetchJson<ChatMessage[]>(
+        `/api/v1/chat/history${scanId ? `?scan_id=${encodeURIComponent(scanId)}` : ''}`,
+      ),
+  },
 };
