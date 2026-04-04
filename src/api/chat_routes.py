@@ -196,7 +196,7 @@ async def _ask_claude(prompt: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
 
         if proc.returncode == 0 and stdout:
             return stdout.decode("utf-8", errors="replace").strip()
@@ -209,20 +209,57 @@ async def _ask_claude(prompt: str) -> str:
         return _fallback_response(prompt)
 
     except asyncio.TimeoutError:
-        logger.error("Claude CLI Timeout nach 60s")
-        return "Die Analyse dauert zu lange. Bitte versuche es erneut."
+        logger.warning("Claude CLI Timeout — nutze direkte DB-Antwort")
+        # Bei Timeout: Direkt die Scan-Daten aus der DB anzeigen
+        return await _direct_db_answer()
     except Exception as e:
         logger.error("Claude CLI Aufruf fehlgeschlagen", error=str(e))
-        return _fallback_response(prompt)
+        return await _direct_db_answer()
 
 
-def _fallback_response(prompt: str) -> str:
-    """Statische Antwort wenn Claude CLI nicht verfuegbar ist."""
-    return (
-        "Ich kann gerade keine KI-Analyse durchfuehren (Claude CLI nicht verfuegbar). "
-        "Du kannst trotzdem Scans starten — gib einfach ein Ziel ein, z.B. "
-        "'Scanne 10.10.10.1' oder 'Teste example.com'."
-    )
+async def _direct_db_answer() -> str:
+    """Beantwortet Fragen direkt aus der DB — kein Claude nötig."""
+    try:
+        from src.shared.finding_repository import FindingRepository
+        from src.shared.repositories import ScanJobRepository
+        from src.shared.types.models import ScanStatus
+
+        db = await _get_db()
+        scan_repo = ScanJobRepository(db)
+        finding_repo = FindingRepository(db)
+
+        all_scans = await scan_repo.list_all(limit=10)
+        running = [s for s in all_scans if s.status == ScanStatus.RUNNING]
+        completed = [s for s in all_scans if s.status == ScanStatus.COMPLETED]
+
+        parts = ["## Scan-Status\n"]
+
+        if running:
+            parts.append(f"**🔵 {len(running)} laufende(r) Scan(s):**")
+            for s in running:
+                parts.append(f"- `{s.target}` (seit {s.started_at.strftime('%H:%M') if s.started_at else '?'})")
+        else:
+            parts.append("**Keine laufenden Scans.**")
+
+        if completed:
+            last = completed[0]
+            findings = await finding_repo.list_by_scan(last.id)
+            sev: dict[str, int] = {}
+            for f in findings:
+                sev[f.severity] = sev.get(f.severity, 0) + 1
+
+            parts.append(f"\n**Letzter Scan:** `{last.target}` — {last.status}")
+            if findings:
+                sev_text = ", ".join(f"{v}x {k.upper()}" for k, v in sev.items())
+                parts.append(f"**{len(findings)} Findings:** {sev_text}")
+            else:
+                parts.append("Keine Findings.")
+
+        parts.append(f"\n**Gesamt:** {len(all_scans)} Scans in der Datenbank")
+
+        return "\n".join(parts)
+    except Exception:
+        return "Status konnte nicht geladen werden. Bitte versuche es erneut."
 
 
 # ─── Scan im Hintergrund starten ─────────────────────────────────
@@ -417,6 +454,20 @@ async def send_chat_message(request: ChatRequest) -> ChatResponseModel:
 
 async def _process_chat_message(message: str, scan_id: str | None) -> ChatResponseModel:
     """Interne Verarbeitung der Chat-Nachricht."""
+    # 0. Einfache Status-Fragen direkt aus DB beantworten (kein Claude nötig)
+    simple_status = re.compile(
+        r"^(läuft|lauft|status|stand|was läuft|laufende scans|aktive scans|"
+        r"running|wie weit|scan status)\s*\??$",
+        re.IGNORECASE,
+    )
+    if simple_status.match(message.strip()):
+        response_text = await _direct_db_answer()
+        try:
+            await _save_message("agent", response_text, scan_id=scan_id)
+        except Exception:
+            pass
+        return ChatResponseModel(response=response_text, scan_started=False)
+
     # 1. Scan-Befehl erkennen
     is_scan, target = _detect_scan_command(message)
     if is_scan and target:
