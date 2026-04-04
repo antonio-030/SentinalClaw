@@ -104,12 +104,17 @@ async def _invoke_claude_agent(
         if runtime is not None:
             runtime._current_process = None
 
+    raw = stdout.decode("utf-8").strip()
+
     if process.returncode != 0:
         error_msg = stderr.decode("utf-8", errors="replace").strip()
-        logger.error("Claude Agent Fehler", exit_code=process.returncode, error=error_msg[:300])
-        raise RuntimeError(f"Claude Agent fehlgeschlagen: {error_msg[:300]}")
-
-    raw = stdout.decode("utf-8").strip()
+        # Bei Exit 1 mit leerem stderr aber vorhandenem stdout:
+        # Claude hat geantwortet, nur mit non-zero exit (passiert bei busy CLI)
+        if raw and not error_msg:
+            logger.warning("Claude Agent Exit 1 aber Output vorhanden, nutze Output")
+        else:
+            logger.error("Claude Agent Fehler", exit_code=process.returncode, error=error_msg[:300])
+            raise RuntimeError(f"Claude Agent fehlgeschlagen: {error_msg[:300]}")
 
     # JSON parsen
     try:

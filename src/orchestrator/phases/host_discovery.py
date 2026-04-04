@@ -41,13 +41,16 @@ async def run_host_discovery(
     system_prompt = (
         f"You are a host discovery scanner for SentinelClaw.\n"
         f"SECURITY: ONLY scan these targets: {targets_str}\n\n"
-        f"Run this EXACT command:\n"
+        f"Run this command:\n"
         f"docker exec {SANDBOX_CONTAINER} nmap -sn {target}\n\n"
+        f"If the host seems down (blocking ping probes), try with -Pn:\n"
+        f"docker exec {SANDBOX_CONTAINER} nmap -Pn -sn {target}\n\n"
         f"Then list ALL discovered hosts in this EXACT format, one per line:\n"
         f"HOST: <ip_address> <hostname_or_empty>\n\n"
         f"Example:\n"
         f"HOST: 10.10.10.5 webserver.local\n"
         f"HOST: 10.10.10.10\n\n"
+        f"If the target is a domain (not CIDR), always report it as a host.\n"
         f"End with: TOTAL: <number> hosts found"
     )
 
