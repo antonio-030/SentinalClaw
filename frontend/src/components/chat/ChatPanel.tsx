@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Bot, X, Send } from 'lucide-react';
+import Markdown from 'react-markdown';
 import { api } from '../../services/api';
 import type { ChatMessage as ChatMsg } from '../../types/api';
 
@@ -121,7 +122,19 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
                 {msg.role === 'agent' && (
                   <p className="text-[10px] font-semibold text-accent mb-1">Agent</p>
                 )}
-                <p className="text-[13px] whitespace-pre-wrap break-words">{msg.content}</p>
+                {msg.role === 'agent' ? (
+                  <div className="text-[13px] break-words prose prose-invert prose-sm max-w-none
+                    prose-p:my-1 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1
+                    prose-strong:text-text-primary prose-strong:font-semibold
+                    prose-code:text-accent prose-code:bg-accent/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
+                    prose-headings:text-text-primary prose-headings:text-sm prose-headings:mt-2 prose-headings:mb-1
+                    prose-a:text-accent prose-a:no-underline hover:prose-a:underline
+                  ">
+                    <Markdown>{msg.content}</Markdown>
+                  </div>
+                ) : (
+                  <p className="text-[13px] whitespace-pre-wrap break-words">{msg.content}</p>
+                )}
                 <p className="text-[10px] text-text-tertiary mt-1">{msg.timestamp}</p>
               </div>
             </div>
