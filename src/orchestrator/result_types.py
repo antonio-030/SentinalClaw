@@ -7,7 +7,7 @@ Gesamtbewertung erstellt.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.agents.recon.result_types import ReconResult
 
@@ -38,7 +38,7 @@ class OrchestratorResult:
     recommendations: list[str] = field(default_factory=list)
     total_duration_seconds: float = 0.0
     total_tokens_used: int = 0
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
     @property

@@ -56,10 +56,7 @@ def _is_valid_single_target(target: str) -> bool:
     domain_pattern = re.compile(
         r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,}$"
     )
-    if domain_pattern.match(target):
-        return True
-
-    return False
+    return bool(domain_pattern.match(target))
 
 
 def validate_ports(ports: str) -> str:

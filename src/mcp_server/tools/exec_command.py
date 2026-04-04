@@ -7,11 +7,11 @@ Binaries (Allowlist). Scope-Check auf extrahierte Ziele.
 
 import re
 
+from src.sandbox.executor import ExecutionResult, SandboxExecutor
 from src.shared.constants.defaults import ALLOWED_SANDBOX_BINARIES
 from src.shared.logging_setup import get_logger
 from src.shared.scope_validator import ScopeValidator
 from src.shared.types.scope import PentestScope
-from src.sandbox.executor import ExecutionResult, SandboxExecutor
 
 logger = get_logger(__name__)
 

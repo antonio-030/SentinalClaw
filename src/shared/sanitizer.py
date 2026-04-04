@@ -8,7 +8,7 @@ Ausgabe auf eine konfigurierbare Maximallänge gekürzt.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from src.shared.logging_setup import get_logger
 

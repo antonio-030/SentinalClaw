@@ -9,18 +9,17 @@ import argparse
 from pathlib import Path
 from uuid import UUID
 
-from src.shared.config import get_settings
-from src.shared.database import DatabaseManager
-from src.shared.exporters import export_findings_csv, export_findings_jsonl, export_findings_sarif
-from src.shared.logging_setup import get_logger
-from src.shared.repositories import FindingRepository
-
 from src.cli.output import (
     print_compare_json,
     print_compare_table,
     print_findings_json,
     print_findings_table,
 )
+from src.shared.config import get_settings
+from src.shared.database import DatabaseManager
+from src.shared.exporters import export_findings_csv, export_findings_jsonl, export_findings_sarif
+from src.shared.logging_setup import get_logger
+from src.shared.repositories import FindingRepository
 
 logger = get_logger(__name__)
 

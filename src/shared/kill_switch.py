@@ -8,12 +8,12 @@ Sitzung irreversibel (außer im Test-Modus).
 """
 
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Optional
 
-import docker
 from docker.errors import DockerException, NotFound
 
+import docker
 from src.shared.logging_setup import get_logger
 
 # Modulweiter Logger
@@ -49,7 +49,7 @@ class KillSwitch:
         self._kill_flag: threading.Event = threading.Event()
         self._triggered_by: str = ""
         self._reason: str = ""
-        self._activated_at: Optional[datetime] = None
+        self._activated_at: datetime | None = None
         self._initialized: bool = True
 
     def activate(self, triggered_by: str, reason: str) -> None:
@@ -72,7 +72,7 @@ class KillSwitch:
         self._kill_flag.set()
         self._triggered_by = triggered_by
         self._reason = reason
-        self._activated_at = datetime.now(timezone.utc)
+        self._activated_at = datetime.now(UTC)
 
         # Audit-Log: Kill-Switch wurde aktiviert
         logger.critical(
@@ -124,7 +124,7 @@ class KillSwitch:
         return self._reason
 
     @property
-    def activated_at(self) -> Optional[datetime]:
+    def activated_at(self) -> datetime | None:
         """Gibt den Zeitpunkt der Aktivierung zurück."""
         return self._activated_at
 

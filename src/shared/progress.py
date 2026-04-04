@@ -7,9 +7,8 @@ oder zukünftig an die WebSocket-UI sendet.
 
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable
 
 
 @dataclass

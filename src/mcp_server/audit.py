@@ -6,7 +6,6 @@ Sensible Daten (Credentials, PII) werden automatisch maskiert.
 """
 
 import re
-import time
 from typing import Any
 
 from src.shared.constants.defaults import SECRET_PATTERNS

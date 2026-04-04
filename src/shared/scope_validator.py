@@ -7,12 +7,9 @@ Alle 7 Checks müssen bestanden werden, sonst wird blockiert.
 """
 
 import ipaddress
-import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.shared.constants.defaults import (
-    ALLOWED_NMAP_FLAGS,
-    ALLOWED_SANDBOX_BINARIES,
     FORBIDDEN_IP_RANGES,
 )
 from src.shared.logging_setup import get_logger
@@ -61,10 +58,7 @@ def _ip_in_network(ip_str: str, network_str: str) -> bool:
 
 def _ip_in_any_network(ip_str: str, networks: list[str]) -> bool:
     """Prüft ob eine IP in irgendeinem der Netzwerke liegt."""
-    for network in networks:
-        if _ip_in_network(ip_str, network):
-            return True
-    return False
+    return any(_ip_in_network(ip_str, network) for network in networks)
 
 
 def _target_matches_scope_entry(target: str, scope_entry: str) -> bool:
@@ -81,10 +75,7 @@ def _target_matches_scope_entry(target: str, scope_entry: str) -> bool:
         return _ip_in_network(target, scope_entry)
 
     # Wildcard-Domain-Matching (*.example.com)
-    if scope_entry.startswith("*.") and target.endswith(scope_entry[1:]):
-        return True
-
-    return False
+    return bool(scope_entry.startswith("*.") and target.endswith(scope_entry[1:]))
 
 
 def _parse_port_range(port_spec: str) -> set[int]:
@@ -240,7 +231,7 @@ class ScopeValidator:
         self, target: str, port: int | None, tool_name: str, scope: PentestScope
     ) -> ValidationResult:
         """Check 5: Sind wir innerhalb des erlaubten Zeitfensters?"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if scope.time_window_start and now < scope.time_window_start:
             return ValidationResult(

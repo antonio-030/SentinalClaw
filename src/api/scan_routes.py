@@ -114,10 +114,11 @@ async def _run_scan_background(
 ) -> None:
     """Fuehrt den Scan im Hintergrund aus."""
     from uuid import UUID as _UUID
+
+    from src.orchestrator.agent import OrchestratorAgent
     from src.shared.repositories import ScanJobRepository
     from src.shared.types.models import ScanStatus
     from src.shared.types.scope import PentestScope
-    from src.orchestrator.agent import OrchestratorAgent
 
     try:
         db = await _get_db()
@@ -165,8 +166,8 @@ async def list_scans(limit: int = 20) -> list[dict]:
 @router.get("/{scan_id}")
 async def get_scan(scan_id: str) -> dict:
     """Gibt Details zu einem Scan zurueck."""
-    from src.shared.repositories import ScanJobRepository, FindingRepository
-    from src.shared.phase_repositories import ScanPhaseRepository, OpenPortRepository
+    from src.shared.phase_repositories import OpenPortRepository, ScanPhaseRepository
+    from src.shared.repositories import FindingRepository, ScanJobRepository
 
     db = await _get_db()
     scan_repo = ScanJobRepository(db)

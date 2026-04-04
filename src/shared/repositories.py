@@ -9,7 +9,7 @@ WICHTIG: AuditLogRepository hat absichtlich KEIN update() und
 kein delete(). Audit-Logs sind unveränderbar.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import aiosqlite
@@ -21,7 +21,6 @@ from src.shared.types.models import (
     AuditLogEntry,
     Finding,
     ScanJob,
-    ScanResult,
     ScanStatus,
 )
 
@@ -77,7 +76,7 @@ class ScanJobRepository:
     ) -> None:
         """Aktualisiert den Status eines Scan-Jobs."""
         conn = await self._db.get_connection()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         if status == ScanStatus.RUNNING:
             await conn.execute(

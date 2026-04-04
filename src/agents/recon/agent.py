@@ -9,9 +9,6 @@ Entspricht FA-02 im Lastenheft.
 import re
 import time
 
-from src.shared.config import get_settings
-from src.shared.logging_setup import get_logger
-from src.shared.types.scope import PentestScope
 from src.agents.nemoclaw_runtime import NemoClawRuntime, _build_scan_system_prompt
 from src.agents.recon.result_types import (
     DiscoveredHost,
@@ -20,6 +17,9 @@ from src.agents.recon.result_types import (
     VulnerabilityFinding,
 )
 from src.agents.token_tracker import TokenTracker
+from src.shared.config import get_settings
+from src.shared.logging_setup import get_logger
+from src.shared.types.scope import PentestScope
 
 logger = get_logger(__name__)
 

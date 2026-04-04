@@ -9,9 +9,9 @@ parametrisierte Docker-API-Aufrufe.
 import asyncio
 from dataclasses import dataclass
 
-import docker
 import docker.errors
 
+import docker
 from src.shared.config import get_settings
 from src.shared.constants.defaults import ALLOWED_SANDBOX_BINARIES
 from src.shared.logging_setup import get_logger
@@ -91,7 +91,6 @@ class SandboxExecutor:
         import time
 
         start_time = time.monotonic()
-        timed_out = False
 
         try:
             container = self._client.containers.get(self._container_name)

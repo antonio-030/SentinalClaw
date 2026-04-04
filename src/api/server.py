@@ -12,7 +12,7 @@ Routen-Aufteilung:
 """
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,9 +73,9 @@ app.add_middleware(
 
 # ─── Router einbinden ─────────────────────────────────────────────
 
-from src.api.scan_routes import router as scan_router  # noqa: E402
-from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E402
 from src.api.finding_routes import router as finding_router  # noqa: E402
+from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E402
+from src.api.scan_routes import router as scan_router  # noqa: E402
 
 app.include_router(scan_router)
 app.include_router(scan_detail_router)
@@ -126,7 +126,7 @@ async def health_check() -> HealthResponse:
         provider=settings.llm_provider,
         sandbox_running=sandbox_ok,
         db_connected=db_ok,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
     )
 
 

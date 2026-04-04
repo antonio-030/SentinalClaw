@@ -8,14 +8,13 @@ die tatsächlich einen Scan starten und den Agent ausführen.
 import argparse
 import time
 
+from src.cli.output import print_result
 from src.shared.config import get_settings
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
 from src.shared.repositories import AuditLogRepository, ScanJobRepository
 from src.shared.types.models import AuditLogEntry, ScanJob, ScanStatus
 from src.shared.types.scope import PentestScope
-
-from src.cli.output import print_result
 
 logger = get_logger(__name__)
 
@@ -87,7 +86,7 @@ async def cmd_scan(args: argparse.Namespace) -> None:
     ))
 
     print(f"  Scan-ID: {job.id}")
-    print(f"  Status:  RUNNING")
+    print("  Status:  RUNNING")
     print()
 
     # NemoClaw-Runtime und Recon-Agent erstellen

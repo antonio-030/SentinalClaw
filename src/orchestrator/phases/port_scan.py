@@ -9,14 +9,14 @@ Ergebnis wird in DB (open_ports) persistiert.
 import re
 from uuid import UUID
 
+from src.agents.nemoclaw_runtime import SANDBOX_CONTAINER, NemoClawRuntime
+from src.orchestrator.phases.base import PhaseResult, execute_phase
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
 from src.shared.phase_repositories import (
     OpenPortRepository,
     ScanPhaseRepository,
 )
-from src.agents.nemoclaw_runtime import NemoClawRuntime, SANDBOX_CONTAINER
-from src.orchestrator.phases.base import PhaseResult, execute_phase
 
 logger = get_logger(__name__)
 

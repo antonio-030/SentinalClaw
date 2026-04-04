@@ -4,9 +4,9 @@ Einstiegspunkt für den MCP-Server.
 Starten mit: python -m src.mcp_server
 """
 
+from src.mcp_server.server import create_mcp_server
 from src.shared.config import get_settings
 from src.shared.logging_setup import setup_logging
-from src.mcp_server.server import create_mcp_server
 
 
 def main() -> None:

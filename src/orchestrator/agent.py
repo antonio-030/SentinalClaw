@@ -7,22 +7,18 @@ Entspricht FA-01 im Lastenheft.
 """
 
 import time
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from uuid import uuid4
 
+from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.agents.recon.result_types import ReconResult
+from src.orchestrator.result_types import OrchestratorResult, ScanPhase
 from src.shared.config import get_settings
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
 from src.shared.repositories import AuditLogRepository, FindingRepository, ScanJobRepository
-from src.shared.scope_validator import ScopeValidator
 from src.shared.types.models import AuditLogEntry, ScanJob, ScanStatus
 from src.shared.types.scope import PentestScope
-from src.agents.nemoclaw_runtime import NemoClawRuntime
-from src.agents.recon.agent import ReconAgent
-from src.agents.recon.result_types import ReconResult
-from src.orchestrator.prompts import ORCHESTRATOR_SYSTEM_PROMPT
-from src.orchestrator.result_types import OrchestratorResult, ScanPhase
 
 logger = get_logger(__name__)
 
@@ -147,7 +143,7 @@ class OrchestratorAgent:
             # Scan erfolgreich abgeschlossen
             duration = time.monotonic() - start_time
             result.total_duration_seconds = duration
-            result.completed_at = datetime.now(timezone.utc)
+            result.completed_at = datetime.now(UTC)
 
             await self._scan_repo.update_status(
                 job.id, ScanStatus.COMPLETED, tokens_used=recon_result.total_tokens_used
@@ -269,7 +265,7 @@ class OrchestratorAgent:
         if scan_type in ("vuln", "full"):
             plan.insert(1, ScanPhase(
                 name="Vulnerability Assessment",
-                description=f"Vulnerability-Scan mit nuclei auf entdeckte Services",
+                description="Vulnerability-Scan mit nuclei auf entdeckte Services",
             ))
 
         return plan

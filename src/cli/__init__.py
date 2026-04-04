@@ -113,9 +113,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def _dispatch(args: argparse.Namespace) -> None:
     """Verteilt den CLI-Aufruf an die passende Command-Funktion."""
     # Lazy-Imports um zirkuläre Abhängigkeiten und Startzeit zu minimieren
-    from src.cli.scan_commands import cmd_scan, cmd_orchestrate
-    from src.cli.admin_commands import cmd_status, cmd_history, cmd_kill, cmd_profiles
-    from src.cli.data_commands import cmd_findings, cmd_compare, cmd_report, cmd_export
+    from src.cli.admin_commands import cmd_history, cmd_kill, cmd_profiles, cmd_status
+    from src.cli.data_commands import cmd_compare, cmd_export, cmd_findings, cmd_report
+    from src.cli.scan_commands import cmd_orchestrate, cmd_scan
 
     command = args.command
 

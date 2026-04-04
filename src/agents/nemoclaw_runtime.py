@@ -157,7 +157,7 @@ async def _invoke_claude_agent(
             process.communicate(input=user_prompt.encode("utf-8")),
             timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         raise RuntimeError(f"Claude Agent Timeout nach {timeout}s")
     finally:
@@ -305,7 +305,6 @@ class NemoClawRuntime:
     def is_openclaw_native(self) -> bool:
         """OpenClaw SDK verfügbar (für zukünftige native Integration)."""
         try:
-            from openclaw import OpenClaw
             return True
         except Exception:
             return False

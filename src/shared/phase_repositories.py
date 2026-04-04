@@ -6,12 +6,12 @@ in der Datenbank. Ermöglicht Fortschritts-Tracking und
 phasenübergreifende Datenübergabe.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import aiosqlite
 
-from src.shared.database import DatabaseManager, deserialize_json, serialize_json
+from src.shared.database import DatabaseManager, serialize_json
 from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -38,7 +38,7 @@ class ScanPhaseRepository:
                (id, scan_job_id, phase_number, name, description, status, created_at)
                VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
             (str(phase_id), str(scan_job_id), phase_number, name, description,
-             datetime.now(timezone.utc).isoformat()),
+             datetime.now(UTC).isoformat()),
         )
         await conn.commit()
         logger.info("Phase erstellt", phase_id=str(phase_id), name=name, number=phase_number)
@@ -60,7 +60,7 @@ class ScanPhaseRepository:
     ) -> None:
         """Aktualisiert den Status einer Phase mit Ergebnissen."""
         conn = await self._db.get_connection()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         params: list = [status]
         sql_parts = ["status = ?"]
@@ -145,7 +145,7 @@ class DiscoveredHostRepository:
                (id, scan_job_id, phase_id, address, hostname, os_guess, state, created_at)
                VALUES (?, ?, ?, ?, ?, ?, 'up', ?)""",
             (str(host_id), str(scan_job_id), str(phase_id), address, hostname,
-             os_guess, datetime.now(timezone.utc).isoformat()),
+             os_guess, datetime.now(UTC).isoformat()),
         )
         await conn.commit()
         return host_id
@@ -193,7 +193,7 @@ class OpenPortRepository:
                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
             (str(port_id), str(scan_job_id), str(phase_id), host_address,
              port, protocol, service, version,
-             datetime.now(timezone.utc).isoformat()),
+             datetime.now(UTC).isoformat()),
         )
         await conn.commit()
         return port_id

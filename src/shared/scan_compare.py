@@ -207,7 +207,7 @@ class ScanComparator:
         lines.append("")
 
         # Port-Änderungen
-        lines.append(f"Port-Änderungen:")
+        lines.append("Port-Änderungen:")
         lines.append(f"  Neu geöffnet:  {len(new_ports)}")
         lines.append(f"  Geschlossen:   {len(closed_ports)}")
         lines.append("")

@@ -9,18 +9,14 @@ import time
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from src.shared.database import DatabaseManager
-from src.shared.logging_setup import get_logger
-from src.shared.phase_repositories import (
-    DiscoveredHostRepository,
-    OpenPortRepository,
-    ScanPhaseRepository,
-)
 from src.agents.nemoclaw_runtime import (
     NemoClawRuntime,
-    SANDBOX_CONTAINER,
     _build_cli_args,
     _invoke_claude_agent,
+)
+from src.shared.logging_setup import get_logger
+from src.shared.phase_repositories import (
+    ScanPhaseRepository,
 )
 
 logger = get_logger(__name__)

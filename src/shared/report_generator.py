@@ -5,13 +5,13 @@ Erzeugt Markdown-Reports aus Datenbank-Daten: Executive Summary,
 technischer Detailbericht und Compliance-Mapping (BSI, ISO 27001).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
 from src.shared.repositories import AuditLogRepository, FindingRepository, ScanJobRepository
-from src.shared.types.models import Finding, ScanJob, Severity
+from src.shared.types.models import Finding, ScanJob
 
 logger = get_logger(__name__)
 
@@ -289,5 +289,5 @@ def _format_finding_detail(finding: Finding) -> list[str]:
 
 def _footer() -> str:
     """Erzeugt die Report-Fusszeile mit Zeitstempel."""
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     return f"*Generiert von SentinelClaw v0.1 (PoC) am {timestamp} UTC*"

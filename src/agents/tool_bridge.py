@@ -8,8 +8,9 @@ Aufruf wird mit Scope und Executor abgesichert.
 
 import json
 import traceback
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from src.mcp_server.tools.exec_command import run_exec_command
 from src.mcp_server.tools.parse_output import parse_output

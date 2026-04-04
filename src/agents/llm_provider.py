@@ -65,7 +65,7 @@ async def _invoke_claude_cli(
             process.communicate(input=input_text.encode("utf-8")),
             timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         raise RuntimeError(f"Claude CLI Timeout nach {timeout}s")
 
@@ -265,7 +265,6 @@ class ClaudeApiProvider:
         max_tokens: int = 4096,
     ) -> LlmResponse:
         """Sendet Nachrichten an Claude über die Anthropic API."""
-        import anthropic
 
         system_prompt = ""
         api_messages: list[dict] = []

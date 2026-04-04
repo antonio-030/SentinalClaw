@@ -10,7 +10,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 EscalationLevel = Literal[0, 1, 2, 3, 4]
 
 

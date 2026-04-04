@@ -9,14 +9,13 @@ Siehe docs/KILL_SWITCH.md Abschnitt 7.
 
 import asyncio
 import subprocess
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-import docker
 from docker.errors import DockerException, NotFound
 from docker.models.containers import Container
 
-from src.shared.config import get_settings, Settings
+import docker
+from src.shared.config import Settings, get_settings
 from src.shared.database import DatabaseManager
 from src.shared.kill_switch import KillSwitch
 from src.shared.logging_setup import get_logger
@@ -44,9 +43,9 @@ class Watchdog:
         self._health_failures: int = 0
         self._running: bool = True
         self._settings: Settings = get_settings()
-        self._db: Optional[DatabaseManager] = None
-        self._scan_repo: Optional[ScanJobRepository] = None
-        self._docker_client: Optional[docker.DockerClient] = None
+        self._db: DatabaseManager | None = None
+        self._scan_repo: ScanJobRepository | None = None
+        self._docker_client: docker.DockerClient | None = None
 
     async def _initialize(self) -> None:
         """Erstellt DB-Verbindung und Docker-Client beim Start."""
@@ -105,7 +104,7 @@ class Watchdog:
         running_scans: list[ScanJob] = await self._scan_repo.list_by_status(
             ScanStatus.RUNNING
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for scan in running_scans:
             if scan.started_at is None:

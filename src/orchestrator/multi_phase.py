@@ -13,8 +13,6 @@ Phase 4: Analyse          → Bewertung und Empfehlungen
 import time
 from uuid import UUID
 
-from src.shared.database import DatabaseManager
-from src.shared.logging_setup import get_logger
 from src.agents.nemoclaw_runtime import NemoClawRuntime
 from src.agents.recon.result_types import (
     DiscoveredHost,
@@ -22,11 +20,13 @@ from src.agents.recon.result_types import (
     ReconResult,
     VulnerabilityFinding,
 )
+from src.orchestrator.phases.analysis import run_analysis
 from src.orchestrator.phases.host_discovery import run_host_discovery
 from src.orchestrator.phases.port_scan import run_port_scan
-from src.orchestrator.phases.vuln_scan import run_vuln_scan
 from src.orchestrator.phases.ssl_analysis import has_https_ports, run_ssl_analysis
-from src.orchestrator.phases.analysis import run_analysis
+from src.orchestrator.phases.vuln_scan import run_vuln_scan
+from src.shared.database import DatabaseManager
+from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 

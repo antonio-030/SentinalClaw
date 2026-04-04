@@ -11,11 +11,11 @@ Ergebnisse aus Phase 1-3. Erstellt:
 
 from uuid import UUID
 
+from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.orchestrator.phases.base import PhaseResult
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
 from src.shared.phase_repositories import ScanPhaseRepository
-from src.agents.nemoclaw_runtime import NemoClawRuntime
-from src.orchestrator.phases.base import PhaseResult, execute_phase
 
 logger = get_logger(__name__)
 
@@ -88,7 +88,7 @@ async def run_analysis(
 
     # Phase 4 braucht KEINE Bash-Tools — nur Claude-Reasoning
     # Dafür nutzen wir --allowedTools ohne Bash (kein Tool-Zugriff)
-    from src.agents.nemoclaw_runtime import _build_cli_args, _invoke_claude_agent
+    from src.agents.nemoclaw_runtime import _invoke_claude_agent
 
     cli_args = [
         "--print",

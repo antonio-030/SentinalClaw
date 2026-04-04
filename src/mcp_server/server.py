@@ -7,26 +7,25 @@ Jeder Aufruf wird gegen den Scope validiert und geloggt.
 """
 
 import json
-from typing import Any
 
 from fastmcp import FastMCP
 
-from src.shared.config import get_settings
-from src.shared.logging_setup import get_logger, setup_logging
-from src.shared.scope_validator import ScopeValidator
-from src.shared.types.scope import PentestScope
-from src.mcp_server.tools.port_scan import run_port_scan
-from src.mcp_server.tools.vuln_scan import run_vuln_scan
 from src.mcp_server.tools.exec_command import run_exec_command
 from src.mcp_server.tools.parse_output import parse_output
+from src.mcp_server.tools.port_scan import run_port_scan
+from src.mcp_server.tools.vuln_scan import run_vuln_scan
 from src.sandbox.executor import SandboxExecutor
+from src.shared.config import get_settings
+from src.shared.logging_setup import get_logger
+from src.shared.scope_validator import ScopeValidator
+from src.shared.types.scope import PentestScope
 
 logger = get_logger(__name__)
 
 
 def create_mcp_server() -> FastMCP:
     """Erstellt und konfiguriert den MCP-Server mit allen 4 Tools."""
-    settings = get_settings()
+    get_settings()
     mcp = FastMCP(
         name="SentinelClaw MCP-Server",
         instructions=(

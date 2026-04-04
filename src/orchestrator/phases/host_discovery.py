@@ -9,14 +9,14 @@ Ergebnis wird in DB (discovered_hosts) persistiert.
 import re
 from uuid import UUID
 
+from src.agents.nemoclaw_runtime import SANDBOX_CONTAINER, NemoClawRuntime
+from src.orchestrator.phases.base import PhaseResult, execute_phase
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
 from src.shared.phase_repositories import (
     DiscoveredHostRepository,
     ScanPhaseRepository,
 )
-from src.agents.nemoclaw_runtime import NemoClawRuntime, SANDBOX_CONTAINER
-from src.orchestrator.phases.base import PhaseResult, execute_phase
 
 logger = get_logger(__name__)
 
@@ -138,7 +138,7 @@ def _parse_hosts(output: str, default_target: str) -> list[dict]:
             hosts.append({"address": ip, "hostname": ""})
 
     # Fallback: Wenn es ein einzelner Host ist (Domain statt CIDR)
-    if not hosts and not "/" in default_target:
+    if not hosts and "/" not in default_target:
         hosts.append({"address": default_target, "hostname": default_target})
 
     return hosts

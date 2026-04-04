@@ -6,7 +6,7 @@ Orientiert am DB-Schema aus ADR-002, reduziert auf PoC-Scope
 (kein Multi-Tenant, keine Organizations).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
@@ -45,7 +45,7 @@ class Severity(StrEnum):
 
 def _utc_now() -> datetime:
     """Gibt die aktuelle UTC-Zeit zurück."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ScanJob(BaseModel):
