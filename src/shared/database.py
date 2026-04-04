@@ -65,6 +65,60 @@ CREATE TABLE IF NOT EXISTS scan_results (
     created_at      TEXT NOT NULL
 );
 
+-- Scan-Phasen (Fortschritt pro Phase eines Scans)
+CREATE TABLE IF NOT EXISTS scan_phases (
+    id              TEXT PRIMARY KEY,
+    scan_job_id     TEXT NOT NULL REFERENCES scan_jobs(id),
+    phase_number    INTEGER NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    tool_used       TEXT,
+    command_executed TEXT,
+    raw_output      TEXT,
+    parsed_result   TEXT DEFAULT '{}',
+    hosts_found     INTEGER DEFAULT 0,
+    ports_found     INTEGER DEFAULT 0,
+    findings_found  INTEGER DEFAULT 0,
+    duration_seconds REAL DEFAULT 0.0,
+    started_at      TEXT,
+    completed_at    TEXT,
+    error_message   TEXT,
+    created_at      TEXT NOT NULL
+);
+
+-- Entdeckte Hosts (pro Scan)
+CREATE TABLE IF NOT EXISTS discovered_hosts (
+    id              TEXT PRIMARY KEY,
+    scan_job_id     TEXT NOT NULL REFERENCES scan_jobs(id),
+    phase_id        TEXT REFERENCES scan_phases(id),
+    address         TEXT NOT NULL,
+    hostname        TEXT DEFAULT '',
+    os_guess        TEXT DEFAULT '',
+    state           TEXT DEFAULT 'up',
+    created_at      TEXT NOT NULL
+);
+
+-- Offene Ports (pro Host)
+CREATE TABLE IF NOT EXISTS open_ports (
+    id              TEXT PRIMARY KEY,
+    scan_job_id     TEXT NOT NULL REFERENCES scan_jobs(id),
+    phase_id        TEXT REFERENCES scan_phases(id),
+    host_address    TEXT NOT NULL,
+    port            INTEGER NOT NULL,
+    protocol        TEXT DEFAULT 'tcp',
+    state           TEXT DEFAULT 'open',
+    service         TEXT DEFAULT '',
+    version         TEXT DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+
+-- Indizes für die neuen Tabellen
+CREATE INDEX IF NOT EXISTS idx_scan_phases_job ON scan_phases(scan_job_id);
+CREATE INDEX IF NOT EXISTS idx_discovered_hosts_job ON discovered_hosts(scan_job_id);
+CREATE INDEX IF NOT EXISTS idx_open_ports_job ON open_ports(scan_job_id);
+CREATE INDEX IF NOT EXISTS idx_open_ports_host ON open_ports(host_address);
+
 -- Audit-Logs (UNVERÄNDERBAR — kein UPDATE, kein DELETE)
 CREATE TABLE IF NOT EXISTS audit_logs (
     id              TEXT PRIMARY KEY,

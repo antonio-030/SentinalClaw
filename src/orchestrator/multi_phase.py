@@ -1,70 +1,33 @@
 """
 Multi-Phase Scan-Executor für den Orchestrator.
 
-Führt jede Scan-Phase als separaten Claude-Agent-Aufruf aus.
-Zwischen den Phasen werden Ergebnisse analysiert und die
-nächste Phase mit den relevanten Informationen gefüttert.
+Koordiniert 4 Phasen als separate Agent-Aufrufe mit
+DB-Persistenz und Ergebnis-Weitergabe zwischen Phasen:
 
-Phase 1: Host Discovery (nmap -sn) → Welche Hosts sind aktiv?
-Phase 2: Port-Scan (nmap -sV) → Welche Ports/Services laufen?
-Phase 3: Vuln-Scan (nuclei) → Welche Schwachstellen gibt es?
+Phase 1: Host Discovery   → Welche Hosts sind aktiv?
+Phase 2: Port-Scan        → Welche Ports/Services laufen?
+Phase 3: Vuln-Assessment  → Welche Schwachstellen gibt es?
+Phase 4: Analyse          → Bewertung und Empfehlungen
 """
 
 import time
+from uuid import UUID
 
+from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
-from src.agents.nemoclaw_runtime import (
-    NemoClawRuntime,
-    SANDBOX_CONTAINER,
-    _build_cli_args,
-    _invoke_claude_agent,
+from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.agents.recon.result_types import (
+    DiscoveredHost,
+    OpenPort,
+    ReconResult,
+    VulnerabilityFinding,
 )
-from src.agents.recon.agent import parse_agent_output
-from src.agents.recon.result_types import ReconResult
-from src.agents.token_tracker import TokenTracker
+from src.orchestrator.phases.host_discovery import run_host_discovery
+from src.orchestrator.phases.port_scan import run_port_scan
+from src.orchestrator.phases.vuln_scan import run_vuln_scan
+from src.orchestrator.phases.analysis import run_analysis
 
 logger = get_logger(__name__)
-
-
-async def run_phase(
-    phase_name: str,
-    system_prompt: str,
-    user_prompt: str,
-    max_turns: int = 5,
-    timeout: float = 180,
-    runtime: NemoClawRuntime | None = None,
-) -> tuple[str, int]:
-    """Führt eine einzelne Scan-Phase als Claude-Agent-Aufruf aus.
-
-    Gibt den Textoutput und den geschätzten Token-Verbrauch zurück.
-    """
-    logger.info("Phase gestartet", phase=phase_name)
-    start = time.monotonic()
-
-    cli_args = _build_cli_args(
-        system_prompt=system_prompt,
-        max_turns=max_turns,
-    )
-
-    data = await _invoke_claude_agent(
-        args=cli_args,
-        user_prompt=user_prompt,
-        timeout=timeout,
-        runtime=runtime,
-    )
-
-    content = data.get("result", data.get("content", ""))
-    tokens = data.get("num_turns", 0) * 5000  # Grobe Schätzung pro Turn
-    duration = time.monotonic() - start
-
-    logger.info(
-        "Phase abgeschlossen",
-        phase=phase_name,
-        duration_s=round(duration, 1),
-        content_length=len(content),
-    )
-
-    return content, tokens
 
 
 async def run_multi_phase_scan(
@@ -72,110 +35,132 @@ async def run_multi_phase_scan(
     ports: str = "1-1000",
     allowed_targets: list[str] | None = None,
     max_escalation_level: int = 2,
+    scan_job_id: UUID | None = None,
+    db: DatabaseManager | None = None,
     runtime: NemoClawRuntime | None = None,
 ) -> ReconResult:
-    """Führt einen 3-Phasen-Scan mit separaten Agent-Aufrufen durch.
+    """Führt einen vollständigen 4-Phasen-Scan durch.
 
-    Jede Phase bekommt die Ergebnisse der vorherigen Phase als Kontext.
-    So kann der Agent gezielter arbeiten und die Token-Kosten sinken.
+    Jede Phase:
+    - Ist ein eigenständiger Claude-Agent-Aufruf
+    - Bekommt die Ergebnisse der vorherigen Phase als Kontext
+    - Speichert ihre Ergebnisse in der Datenbank
+    - Kann unabhängig fehlschlagen (nächste Phase läuft trotzdem)
     """
     if allowed_targets is None:
         allowed_targets = [target]
 
     total_start = time.monotonic()
-    token_tracker = TokenTracker(200_000)
-    all_outputs: list[str] = []
 
-    security_rules = (
-        f"SECURITY RULES: ONLY scan {', '.join(allowed_targets)}. "
-        f"NEVER scan other targets. Use docker exec {SANDBOX_CONTAINER} for ALL commands. "
-        f"Max escalation: {max_escalation_level}."
+    # DB erstellen falls nicht übergeben
+    from src.shared.config import get_settings
+    if db is None:
+        db = DatabaseManager(get_settings().db_path)
+        await db.initialize()
+
+    # Scan-Job-ID erstellen falls nicht übergeben
+    if scan_job_id is None:
+        from uuid import uuid4
+        scan_job_id = uuid4()
+
+    logger.info(
+        "Multi-Phase Scan gestartet",
+        target=target,
+        phases=4,
+        scan_id=str(scan_job_id),
     )
 
     # ── Phase 1: Host Discovery ────────────────────────────────
-    logger.info("Phase 1: Host Discovery", target=target)
-
-    phase1_system = (
-        f"You are a network scanner. {security_rules}\n"
-        f"Run ONLY this command and report the output:\n"
-        f"docker exec {SANDBOX_CONTAINER} nmap -sn {target}\n"
-        f"List all discovered hosts (IP + hostname if available)."
-    )
-
-    phase1_output, phase1_tokens = await run_phase(
-        phase_name="Host Discovery",
-        system_prompt=phase1_system,
-        user_prompt=f"Discover active hosts in {target}",
-        max_turns=3,
-        timeout=120,
+    phase1 = await run_host_discovery(
+        target=target,
+        scan_job_id=scan_job_id,
+        db=db,
         runtime=runtime,
+        allowed_targets=allowed_targets,
     )
-    all_outputs.append(f"## Phase 1: Host Discovery\n{phase1_output}")
-    token_tracker.add_usage(phase1_tokens, 0)
+    hosts_found = phase1.hosts_found
 
     # ── Phase 2: Port-Scan ─────────────────────────────────────
-    logger.info("Phase 2: Port-Scan", target=target)
-
-    phase2_system = (
-        f"You are a port scanner. {security_rules}\n"
-        f"Previous scan found these hosts:\n{phase1_output[:1000]}\n\n"
-        f"Run this command and analyze the results:\n"
-        f"docker exec {SANDBOX_CONTAINER} nmap -sV -sC -p {ports} {target}\n"
-        f"Report: open ports, services, versions in a table."
-    )
-
-    phase2_output, phase2_tokens = await run_phase(
-        phase_name="Port-Scan",
-        system_prompt=phase2_system,
-        user_prompt=f"Scan ports {ports} on {target} with service detection",
-        max_turns=4,
-        timeout=180,
+    phase2 = await run_port_scan(
+        target=target,
+        ports=ports,
+        discovered_hosts=hosts_found,
+        scan_job_id=scan_job_id,
+        db=db,
         runtime=runtime,
+        allowed_targets=allowed_targets,
     )
-    all_outputs.append(f"## Phase 2: Port-Scan\n{phase2_output}")
-    token_tracker.add_usage(phase2_tokens, 0)
+    ports_found = phase2.ports_found
 
     # ── Phase 3: Vulnerability Assessment ──────────────────────
-    # Nur wenn Stufe >= 2 und offene Ports gefunden wurden
-    phase3_output = ""
-    if max_escalation_level >= 2 and ("open" in phase2_output.lower() or "PORT" in phase2_output):
-        logger.info("Phase 3: Vulnerability Assessment", target=target)
-
-        phase3_system = (
-            f"You are a vulnerability scanner. {security_rules}\n"
-            f"Previous port scan found:\n{phase2_output[:1500]}\n\n"
-            f"Run a quick vulnerability assessment based on the discovered services.\n"
-            f"Use: docker exec {SANDBOX_CONTAINER} nmap --script=default,vuln -p {ports} --script-timeout 30 {target}\n"
-            f"If the scan takes too long, analyze the version information from Phase 2 instead.\n"
-            f"For each service, check if the version has known CVEs.\n"
-            f"Report vulnerabilities sorted by severity (CRITICAL, HIGH, MEDIUM, LOW).\n"
-            f"Include CVE IDs. Provide risk assessment and 3 recommendations."
-        )
-
-        phase3_output, phase3_tokens = await run_phase(
-            phase_name="Vulnerability Assessment",
-            system_prompt=phase3_system,
-            user_prompt=f"Check {target} for vulnerabilities",
-            max_turns=4,
-            timeout=180,
+    phase3_findings: list[dict] = []
+    if max_escalation_level >= 2:
+        phase3 = await run_vuln_scan(
+            target=target,
+            ports=ports,
+            discovered_hosts=hosts_found,
+            ports_found=ports_found,
+            scan_job_id=scan_job_id,
+            db=db,
             runtime=runtime,
+            allowed_targets=allowed_targets,
         )
-        all_outputs.append(f"## Phase 3: Vulnerability Assessment\n{phase3_output}")
-        token_tracker.add_usage(phase3_tokens, 0)
+        phase3_findings = phase3.findings_found
     else:
-        all_outputs.append("## Phase 3: Übersprungen (keine offenen Ports oder Stufe < 2)")
-        logger.info("Phase 3 übersprungen", reason="Keine offenen Ports oder Stufe < 2")
+        logger.info("Phase 3 übersprungen (Eskalationsstufe < 2)")
 
-    # ── Ergebnisse zusammenführen ──────────────────────────────
-    total_duration = time.monotonic() - total_start
-    combined_output = "\n\n".join(all_outputs)
-
-    result = parse_agent_output(
+    # ── Phase 4: Analyse & Bewertung ───────────────────────────
+    phase4 = await run_analysis(
         target=target,
-        agent_output=combined_output,
-        duration=total_duration,
-        tokens=token_tracker.total_used,
-        steps=3 if phase3_output else 2,
+        hosts_found=hosts_found,
+        ports_found=ports_found,
+        findings_found=phase3_findings,
+        scan_job_id=scan_job_id,
+        db=db,
+        runtime=runtime,
+    )
+
+    # ── Gesamtergebnis zusammenbauen ───────────────────────────
+    total_duration = time.monotonic() - total_start
+    total_tokens = (
+        phase1.tokens_used + phase2.tokens_used
+        + (phase3.tokens_used if max_escalation_level >= 2 else 0)
+        + phase4.tokens_used
+    )
+
+    # ReconResult aus den Phase-Ergebnissen bauen
+    result = ReconResult(
+        target=target,
+        discovered_hosts=[
+            DiscoveredHost(address=h["address"], hostname=h.get("hostname", ""))
+            for h in hosts_found
+        ],
+        open_ports=[
+            OpenPort(
+                host=p["host"], port=p["port"],
+                protocol=p.get("protocol", "tcp"),
+                service=p.get("service", ""),
+                version=p.get("version", ""),
+            )
+            for p in ports_found
+        ],
+        vulnerabilities=[
+            VulnerabilityFinding(
+                title=f.get("title", ""),
+                severity=f.get("severity", "info"),
+                cvss_score=f.get("cvss", 0.0),
+                cve_id=f.get("cve_id"),
+                host=f.get("host", target),
+                port=f.get("port"),
+            )
+            for f in phase3_findings
+        ],
+        agent_summary=phase4.raw_output or "",
+        scan_duration_seconds=total_duration,
+        total_tokens_used=total_tokens,
+        phases_completed=sum(1 for p in [phase1, phase2, phase4]
+                            if p.status == "completed")
+            + (1 if max_escalation_level >= 2 and phase3.status == "completed" else 0),
     )
 
     logger.info(
@@ -184,8 +169,9 @@ async def run_multi_phase_scan(
         hosts=result.total_hosts,
         ports=result.total_open_ports,
         vulns=result.total_vulnerabilities,
+        phases=result.phases_completed,
         duration_s=round(total_duration, 1),
-        tokens=token_tracker.total_used,
+        tokens=total_tokens,
     )
 
     return result
