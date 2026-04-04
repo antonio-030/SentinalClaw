@@ -18,8 +18,6 @@ export function DashboardPage() {
 
   const isLoading = isLoadingStatus || isLoadingScans || isLoadingFindings;
 
-  if (isLoading) return <div className="flex justify-center py-16"><div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" /></div>;
-
   const runningScans = status?.scans.running ?? 0;
   const criticalFindings = findings.filter((f: Finding) => f.severity === 'critical').length;
   const systemOnline = !!status;
@@ -37,6 +35,14 @@ export function DashboardPage() {
     ).slice(0, 5),
     [findings]
   );
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-16">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-7xl">

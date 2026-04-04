@@ -10,11 +10,10 @@
 // - Polling-basiert (kein WebSocket)
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Bot, Minus, X, ChevronDown } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
-import type { ChatMessage as ChatMessageType, Scan } from '../../types/api';
+import type { ChatMessage as ChatMessageType } from '../../types/api';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 
@@ -34,7 +33,6 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   // Lokaler State
