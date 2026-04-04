@@ -68,6 +68,38 @@ services:
       timeout: 5s
       retries: 3
 
+  # Watchdog: Unabhaengiger Ueberwachungsprozess (siehe docs/KILL_SWITCH.md §7)
+  watchdog:
+    build:
+      context: .
+      dockerfile: docker/mcp-server/Dockerfile
+    container_name: sentinelclaw-watchdog
+    restart: unless-stopped
+    command: ["python", "-m", "src.watchdog"]
+    labels:
+      sentinelclaw: "true"
+      sentinelclaw.role: "watchdog"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    volumes:
+      # Docker-Socket fuer Container-Ueberwachung und Kill-Pfad 2
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Datenbank-Zugriff (gleicher Pfad wie MCP-Server)
+      - ./data:/app/data
+    networks:
+      - sentinel-internal
+    env_file:
+      - .env
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+
 # Netzwerk-Konfiguration
 networks:
   # Internes Netzwerk: MCP-Server ↔ Sandbox Kommunikation
