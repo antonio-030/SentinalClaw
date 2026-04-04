@@ -218,48 +218,114 @@ async def _ask_claude(prompt: str) -> str:
 
 
 async def _direct_db_answer() -> str:
-    """Beantwortet Fragen direkt aus der DB — kein Claude nötig."""
+    """Orchestrator-Status: Umfassender Überblick über alle Komponenten."""
     try:
+        from uuid import UUID
+
         from src.shared.finding_repository import FindingRepository
+        from src.shared.phase_repositories import (
+            DiscoveredHostRepository,
+            OpenPortRepository,
+            ScanPhaseRepository,
+        )
         from src.shared.repositories import ScanJobRepository
         from src.shared.types.models import ScanStatus
 
         db = await _get_db()
         scan_repo = ScanJobRepository(db)
         finding_repo = FindingRepository(db)
+        phase_repo = ScanPhaseRepository(db)
+        port_repo = OpenPortRepository(db)
+        host_repo = DiscoveredHostRepository(db)
 
-        all_scans = await scan_repo.list_all(limit=10)
+        all_scans = await scan_repo.list_all(limit=20)
         running = [s for s in all_scans if s.status == ScanStatus.RUNNING]
         completed = [s for s in all_scans if s.status == ScanStatus.COMPLETED]
+        failed = [s for s in all_scans if s.status in (ScanStatus.FAILED, ScanStatus.EMERGENCY_KILLED)]
 
-        parts = ["## Scan-Status\n"]
+        parts = ["## 🤖 Orchestrator-Status\n"]
 
+        # Laufende Scans mit Details
         if running:
-            parts.append(f"**🔵 {len(running)} laufende(r) Scan(s):**")
+            parts.append(f"### 🔵 {len(running)} laufende(r) Scan(s)\n")
             for s in running:
-                parts.append(f"- `{s.target}` (seit {s.started_at.strftime('%H:%M') if s.started_at else '?'})")
-        else:
-            parts.append("**Keine laufenden Scans.**")
+                elapsed = ""
+                if s.started_at:
+                    from datetime import datetime, timezone
+                    delta = (datetime.now(timezone.utc) - s.started_at).total_seconds()
+                    elapsed = f" — läuft seit {int(delta)}s"
 
+                parts.append(f"**`{s.target}`** ({s.scan_type}){elapsed}")
+
+                # Phasen des laufenden Scans
+                phases = await phase_repo.list_by_scan(s.id)
+                if phases:
+                    for p in phases:
+                        icon = {"completed": "✅", "running": "⏳", "failed": "❌", "pending": "⚪"}.get(p["status"], "?")
+                        parts.append(
+                            f"  {icon} Phase {p['phase_number']}: {p['name']} "
+                            f"({p['status']}, {p['duration_seconds']:.0f}s) "
+                            f"— {p['hosts_found']}H {p['ports_found']}P {p['findings_found']}F"
+                        )
+                parts.append("")
+        else:
+            parts.append("### Keine laufenden Scans\n")
+
+        # Letzter abgeschlossener Scan mit Ergebnissen
         if completed:
             last = completed[0]
+            parts.append(f"### Letzter abgeschlossener Scan\n")
+            parts.append(f"**Ziel:** `{last.target}`")
+
+            duration = ""
+            if last.started_at and last.completed_at:
+                delta = (last.completed_at - last.started_at).total_seconds()
+                duration = f"{delta:.0f}s"
+            parts.append(f"**Dauer:** {duration} | **Tokens:** {last.tokens_used}\n")
+
+            # Hosts
+            hosts = await host_repo.list_by_scan(last.id)
+            if hosts:
+                parts.append(f"**Hosts ({len(hosts)}):**")
+                for h in hosts[:10]:
+                    parts.append(f"- `{h['address']}` {h.get('hostname', '')}")
+
+            # Ports
+            ports = await port_repo.list_by_scan(last.id)
+            if ports:
+                parts.append(f"\n**Offene Ports ({len(ports)}):**")
+                for p in ports[:10]:
+                    parts.append(f"- `{p['host_address']}:{p['port']}/{p['protocol']}` {p['service']} {p['version']}")
+
+            # Findings
             findings = await finding_repo.list_by_scan(last.id)
-            sev: dict[str, int] = {}
-            for f in findings:
-                sev[f.severity] = sev.get(f.severity, 0) + 1
-
-            parts.append(f"\n**Letzter Scan:** `{last.target}` — {last.status}")
             if findings:
-                sev_text = ", ".join(f"{v}x {k.upper()}" for k, v in sev.items())
-                parts.append(f"**{len(findings)} Findings:** {sev_text}")
+                sev: dict[str, int] = {}
+                for f in findings:
+                    sev[f.severity] = sev.get(f.severity, 0) + 1
+                sev_text = ", ".join(f"**{v}x {k.upper()}**" for k, v in sev.items())
+                parts.append(f"\n**Findings ({len(findings)}):** {sev_text}")
+                for f in findings[:8]:
+                    cve = f" ({f.cve_id})" if f.cve_id else ""
+                    parts.append(f"- 🔴 [{f.severity.upper()}] {f.title}{cve}")
             else:
-                parts.append("Keine Findings.")
+                parts.append("\nKeine Findings.")
 
-        parts.append(f"\n**Gesamt:** {len(all_scans)} Scans in der Datenbank")
+            # Phasen
+            phases = await phase_repo.list_by_scan(last.id)
+            if phases:
+                parts.append(f"\n**Phasen:**")
+                for p in phases:
+                    icon = {"completed": "✅", "failed": "❌"}.get(p["status"], "⚪")
+                    parts.append(f"  {icon} {p['name']} ({p['duration_seconds']:.0f}s)")
+
+        # Gesamtstatistik
+        parts.append(f"\n---\n**Gesamt:** {len(all_scans)} Scans ({len(completed)} ✅ {len(running)} 🔵 {len(failed)} ❌)")
 
         return "\n".join(parts)
-    except Exception:
-        return "Status konnte nicht geladen werden. Bitte versuche es erneut."
+    except Exception as e:
+        logger.error("Orchestrator-Status fehlgeschlagen", error=str(e))
+        return f"Status konnte nicht geladen werden: `{e}`"
 
 
 # ─── Scan im Hintergrund starten ─────────────────────────────────
