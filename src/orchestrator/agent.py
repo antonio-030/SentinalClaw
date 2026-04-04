@@ -32,19 +32,21 @@ class OrchestratorAgent:
     strukturierte Zusammenfassung am Ende.
     """
 
-    def __init__(self, scope: PentestScope) -> None:
+    def __init__(self, scope: PentestScope, db: DatabaseManager | None = None) -> None:
         self._scope = scope
         self._settings = get_settings()
         self._runtime = NemoClawRuntime()
-        self._db: DatabaseManager | None = None
+        self._db = db
         self._scan_repo: ScanJobRepository | None = None
         self._audit_repo: AuditLogRepository | None = None
+        self._owns_db = db is None  # Nur schließen wenn selbst erstellt
 
     async def _ensure_db(self) -> None:
         """Initialisiert die Datenbank-Verbindung bei Bedarf."""
         if self._db is None:
             self._db = DatabaseManager(self._settings.db_path)
             await self._db.initialize()
+        if self._scan_repo is None:
             self._scan_repo = ScanJobRepository(self._db)
             self._audit_repo = AuditLogRepository(self._db)
             self._finding_repo = FindingRepository(self._db)
@@ -132,6 +134,8 @@ class OrchestratorAgent:
                 ports=ports,
                 allowed_targets=self._scope.targets_include,
                 max_escalation_level=self._scope.max_escalation_level,
+                scan_job_id=job.id,
+                db=self._db,
                 runtime=self._runtime,
             )
 
@@ -300,6 +304,6 @@ class OrchestratorAgent:
         return create_recommendations(recon)
 
     async def close(self) -> None:
-        """Schließt die Datenbank-Verbindung."""
-        if self._db:
+        """Schließt die DB-Verbindung nur wenn selbst erstellt."""
+        if self._db and self._owns_db:
             await self._db.close()

@@ -128,12 +128,10 @@ async def _run_scan_background(
     from src.shared.types.models import ScanStatus
     from src.shared.types.scope import PentestScope
 
-    # Eigene DB-Connection fuer den Background-Scan
-    scan_db = DatabaseManager(get_settings().db_path)
-
+    # Gemeinsame DB-Connection von der API nutzen (WAL-Modus erlaubt parallele Reads)
     try:
-        await scan_db.initialize()
-        scan_repo = ScanJobRepository(scan_db)
+        db = await _get_db()
+        scan_repo = ScanJobRepository(db)
         await scan_repo.update_status(_UUID(scan_id), ScanStatus.RUNNING)
 
         scope = PentestScope(
@@ -142,20 +140,18 @@ async def _run_scan_background(
             ports_include=ports,
         )
 
-        orchestrator = OrchestratorAgent(scope=scope)
+        # Orchestrator bekommt die gleiche DB-Connection
+        orchestrator = OrchestratorAgent(scope=scope, db=db)
         await orchestrator.orchestrate_scan(target, ports=ports, existing_scan_id=scan_id)
-        await orchestrator.close()
 
     except Exception as error:
         logger.error("Background-Scan fehlgeschlagen", scan_id=scan_id, error=str(error))
-        # Scan auf FAILED setzen wenn möglich
         try:
-            repo = ScanJobRepository(scan_db)
+            db = await _get_db()
+            repo = ScanJobRepository(db)
             await repo.update_status(_UUID(scan_id), ScanStatus.FAILED)
         except Exception:
             pass
-    finally:
-        await scan_db.close()
 
 
 @router.get("")
