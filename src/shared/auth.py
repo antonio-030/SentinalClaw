@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 # Geheimschluessel fuer JWT — in Produktion aus Umgebungsvariable laden
 SECRET_KEY = "sentinelclaw-jwt-secret-change-in-production"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 Stunden
 
 # Rollen-Hierarchie: hoehere Zahl = mehr Rechte
 ROLES = {

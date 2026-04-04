@@ -42,6 +42,14 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     headers,
   });
 
+  if (res.status === 401) {
+    // Token abgelaufen — automatisch ausloggen
+    localStorage.removeItem('sc_token');
+    localStorage.removeItem('sc_user');
+    window.location.reload();
+    throw new Error('Session abgelaufen — bitte neu einloggen');
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => 'Unknown error');
     throw new Error(`API Error ${res.status}: ${body}`);
