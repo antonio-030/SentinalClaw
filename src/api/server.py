@@ -2,13 +2,19 @@
 SentinelClaw REST-API Server.
 
 FastAPI-basierte API die alle SentinelClaw-Funktionen exponiert.
-Basis für die Web-UI und externe Integrationen.
+Basis fuer die Web-UI und externe Integrationen.
+
+Routen-Aufteilung:
+  - server.py              -> App-Setup, Health, Status, Kill, Audit, Profile
+  - scan_routes.py         -> CRUD fuer /api/v1/scans (Start, List, Get, Delete, Cancel)
+  - scan_detail_routes.py  -> Sub-Ressourcen (Export, Compare, Report, Hosts, Ports, Phasen)
+  - finding_routes.py      -> Alle /api/v1/findings/* Endpoints
 """
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -23,7 +29,7 @@ _db: DatabaseManager | None = None
 
 
 async def get_db() -> DatabaseManager:
-    """Gibt die aktive DB-Verbindung zurück. Lazy-Init falls nötig."""
+    """Gibt die aktive DB-Verbindung zurueck. Lazy-Init falls noetig."""
     global _db
     if _db is None:
         settings = get_settings()
@@ -34,7 +40,7 @@ async def get_db() -> DatabaseManager:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialisiert und schließt Ressourcen beim Server-Start/-Stop."""
+    """Initialisiert und schliesst Ressourcen beim Server-Start/-Stop."""
     global _db
     settings = get_settings()
     setup_logging(settings.log_level)
@@ -51,12 +57,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SentinelClaw API",
-    description="AI-gestützte Security Assessment Platform — REST API",
+    description="AI-gestuetzte Security Assessment Platform — REST API",
     version="0.1.0",
     lifespan=lifespan,
 )
 
-# CORS für Web-UI (nur eigene Domain im Produkt)
+# CORS fuer Web-UI (nur eigene Domain im Produkt)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -65,27 +71,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ─── Router einbinden ─────────────────────────────────────────────
+
+from src.api.scan_routes import router as scan_router  # noqa: E402
+from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E402
+from src.api.finding_routes import router as finding_router  # noqa: E402
+
+app.include_router(scan_router)
+app.include_router(scan_detail_router)
+app.include_router(finding_router)
+
 
 # ─── Request/Response Modelle ──────────────────────────────────────
-
-
-class ScanRequest(BaseModel):
-    """Anfrage zum Starten eines Scans."""
-
-    target: str = Field(description="Scan-Ziel (IP, CIDR, Domain)")
-    ports: str = Field(default="1-1000", description="Port-Range")
-    profile: str | None = Field(default=None, description="Scan-Profil Name")
-    scan_type: str = Field(default="recon", description="Scan-Typ")
-    max_escalation_level: int = Field(default=2, ge=0, le=4)
-
-
-class ScanResponse(BaseModel):
-    """Antwort nach Scan-Start."""
-
-    scan_id: str
-    target: str
-    status: str
-    message: str
 
 
 class KillRequest(BaseModel):
@@ -105,11 +102,11 @@ class HealthResponse(BaseModel):
     timestamp: str
 
 
-# ─── Endpoints ─────────────────────────────────────────────────────
+# ─── Endpoints: Health, Kill, Audit, Profile, Status ──────────────
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
+async def health_check() -> HealthResponse:
     """System-Health-Check — wird von Docker Healthcheck genutzt."""
     settings = get_settings()
     sandbox_ok = False
@@ -133,182 +130,8 @@ async def health_check():
     )
 
 
-@app.post("/api/v1/scans", response_model=ScanResponse)
-async def start_scan(request: ScanRequest):
-    """Startet einen neuen Scan."""
-    from src.shared.repositories import AuditLogRepository, ScanJobRepository
-    from src.shared.types.models import AuditLogEntry, ScanJob, ScanStatus
-
-    db = await get_db()
-    scan_repo = ScanJobRepository(db)
-    audit_repo = AuditLogRepository(db)
-
-    # Profil laden wenn angegeben
-    ports = request.ports
-    escalation = request.max_escalation_level
-    if request.profile:
-        from src.shared.scan_profiles import get_profile
-        profile = get_profile(request.profile)
-        ports = profile.ports
-        escalation = profile.max_escalation_level
-
-    # Scan-Job erstellen
-    job = ScanJob(
-        target=request.target,
-        scan_type=request.scan_type,
-        max_escalation_level=escalation,
-        config={"ports": ports, "profile": request.profile},
-    )
-    await scan_repo.create(job)
-
-    # Audit-Log
-    await audit_repo.create(AuditLogEntry(
-        action="scan.created",
-        resource_type="scan_job",
-        resource_id=str(job.id),
-        details={"target": request.target, "ports": ports},
-        triggered_by="api",
-    ))
-
-    # Scan asynchron starten (Background-Task)
-    import asyncio
-    asyncio.create_task(_run_scan_background(str(job.id), request.target, ports, escalation))
-
-    return ScanResponse(
-        scan_id=str(job.id),
-        target=request.target,
-        status="started",
-        message=f"Scan gestartet auf {request.target} (Ports: {ports})",
-    )
-
-
-async def _run_scan_background(scan_id: str, target: str, ports: str, escalation: int):
-    """Führt den Scan im Hintergrund aus."""
-    from uuid import UUID
-    from src.shared.repositories import ScanJobRepository
-    from src.shared.types.models import ScanStatus
-    from src.shared.types.scope import PentestScope
-    from src.orchestrator.agent import OrchestratorAgent
-
-    try:
-        db = await get_db()
-        scan_repo = ScanJobRepository(db)
-        await scan_repo.update_status(UUID(scan_id), ScanStatus.RUNNING)
-
-        scope = PentestScope(
-            targets_include=[target],
-            max_escalation_level=escalation,
-            ports_include=ports,
-        )
-
-        orchestrator = OrchestratorAgent(scope=scope)
-        await orchestrator.orchestrate_scan(target, ports=ports)
-        await orchestrator.close()
-
-    except Exception as error:
-        logger.error("Background-Scan fehlgeschlagen", scan_id=scan_id, error=str(error))
-
-
-@app.get("/api/v1/scans")
-async def list_scans(limit: int = 20):
-    """Listet alle Scans."""
-    from src.shared.repositories import ScanJobRepository
-
-    db = await get_db()
-    repo = ScanJobRepository(db)
-    scans = await repo.list_all(limit)
-
-    return [
-        {
-            "id": str(s.id),
-            "target": s.target,
-            "scan_type": s.scan_type,
-            "status": s.status,
-            "tokens_used": s.tokens_used,
-            "started_at": s.started_at.isoformat() if s.started_at else None,
-            "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-            "created_at": s.created_at.isoformat(),
-        }
-        for s in scans
-    ]
-
-
-@app.get("/api/v1/scans/{scan_id}")
-async def get_scan(scan_id: str):
-    """Gibt Details zu einem Scan zurück."""
-    from uuid import UUID
-    from src.shared.repositories import ScanJobRepository, FindingRepository
-    from src.shared.phase_repositories import ScanPhaseRepository, OpenPortRepository
-
-    db = await get_db()
-    scan_repo = ScanJobRepository(db)
-    finding_repo = FindingRepository(db)
-    phase_repo = ScanPhaseRepository(db)
-    port_repo = OpenPortRepository(db)
-
-    job = await scan_repo.get_by_id(UUID(scan_id))
-    if not job:
-        raise HTTPException(404, f"Scan {scan_id} nicht gefunden")
-
-    findings = await finding_repo.list_by_scan(UUID(scan_id))
-    phases = await phase_repo.list_by_scan(UUID(scan_id))
-    ports = await port_repo.list_by_scan(UUID(scan_id))
-
-    return {
-        "scan": {
-            "id": str(job.id),
-            "target": job.target,
-            "status": job.status,
-            "scan_type": job.scan_type,
-            "tokens_used": job.tokens_used,
-            "created_at": job.created_at.isoformat(),
-        },
-        "phases": phases,
-        "findings": [
-            {
-                "id": str(f.id),
-                "title": f.title,
-                "severity": f.severity,
-                "cvss_score": f.cvss_score,
-                "cve_id": f.cve_id,
-                "target_host": f.target_host,
-                "target_port": f.target_port,
-            }
-            for f in findings
-        ],
-        "open_ports": ports,
-    }
-
-
-@app.get("/api/v1/findings")
-async def list_findings(severity: str | None = None, limit: int = 50):
-    """Listet alle Findings, optional gefiltert nach Severity."""
-    from src.shared.repositories import FindingRepository
-
-    db = await get_db()
-    repo = FindingRepository(db)
-    findings = await repo.list_all(severity=severity, limit=limit)
-
-    return [
-        {
-            "id": str(f.id),
-            "scan_job_id": str(f.scan_job_id),
-            "title": f.title,
-            "severity": f.severity,
-            "cvss_score": f.cvss_score,
-            "cve_id": f.cve_id,
-            "target_host": f.target_host,
-            "target_port": f.target_port,
-            "service": f.service,
-            "description": f.description,
-            "recommendation": f.recommendation,
-        }
-        for f in findings
-    ]
-
-
 @app.post("/api/v1/kill")
-async def emergency_kill(request: KillRequest):
+async def emergency_kill(request: KillRequest) -> dict:
     """Aktiviert den Kill-Switch — stoppt ALLE laufenden Scans."""
     from src.shared.kill_switch import KillSwitch
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
@@ -337,8 +160,8 @@ async def emergency_kill(request: KillRequest):
 
 
 @app.get("/api/v1/audit")
-async def list_audit_logs(limit: int = 50, action: str | None = None):
-    """Listet Audit-Log-Einträge."""
+async def list_audit_logs(limit: int = 50, action: str | None = None) -> list[dict]:
+    """Listet Audit-Log-Eintraege."""
     from src.shared.repositories import AuditLogRepository
 
     db = await get_db()
@@ -364,8 +187,8 @@ async def list_audit_logs(limit: int = 50, action: str | None = None):
 
 
 @app.get("/api/v1/profiles")
-async def list_scan_profiles():
-    """Listet alle verfügbaren Scan-Profile."""
+async def list_scan_profiles() -> list[dict]:
+    """Listet alle verfuegbaren Scan-Profile."""
     from src.shared.scan_profiles import list_profiles
 
     return [
@@ -381,13 +204,13 @@ async def list_scan_profiles():
 
 
 @app.get("/api/v1/status")
-async def system_status():
-    """Gibt den System-Status zurück."""
+async def system_status() -> dict:
+    """Gibt den System-Status zurueck."""
     import shutil
 
     settings = get_settings()
     sandbox_ok = False
-    docker_version = "nicht verfügbar"
+    docker_version = "nicht verfuegbar"
 
     try:
         import docker
@@ -401,7 +224,7 @@ async def system_status():
     claude_available = shutil.which("claude") is not None
     openclaw_available = False
     try:
-        from openclaw import OpenClaw
+        from openclaw import OpenClaw  # noqa: F401
         openclaw_available = True
     except Exception:
         pass

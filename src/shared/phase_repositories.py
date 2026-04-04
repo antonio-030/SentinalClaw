@@ -116,6 +116,12 @@ class ScanPhaseRepository:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def delete_by_scan(self, scan_job_id: UUID) -> int:
+        conn = await self._db.get_connection()
+        cursor = await conn.execute("DELETE FROM scan_phases WHERE scan_job_id = ?", (str(scan_job_id),))
+        await conn.commit()
+        return cursor.rowcount
+
 
 class DiscoveredHostRepository:
     """Persistiert entdeckte Hosts pro Scan."""
@@ -153,6 +159,12 @@ class DiscoveredHostRepository:
             (str(scan_job_id),),
         )
         return [dict(row) for row in await cursor.fetchall()]
+
+    async def delete_by_scan(self, scan_job_id: UUID) -> int:
+        conn = await self._db.get_connection()
+        cursor = await conn.execute("DELETE FROM discovered_hosts WHERE scan_job_id = ?", (str(scan_job_id),))
+        await conn.commit()
+        return cursor.rowcount
 
 
 class OpenPortRepository:
@@ -205,3 +217,9 @@ class OpenPortRepository:
             (host_address,),
         )
         return [dict(row) for row in await cursor.fetchall()]
+
+    async def delete_by_scan(self, scan_job_id: UUID) -> int:
+        conn = await self._db.get_connection()
+        cursor = await conn.execute("DELETE FROM open_ports WHERE scan_job_id = ?", (str(scan_job_id),))
+        await conn.commit()
+        return cursor.rowcount

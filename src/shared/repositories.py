@@ -123,6 +123,18 @@ class ScanJobRepository:
         rows = await cursor.fetchall()
         return [self._row_to_scan_job(row) for row in rows]
 
+    async def delete(self, job_id: UUID) -> bool:
+        """Löscht einen Scan-Job und alle zugehörigen Daten (kaskadierend)."""
+        conn = await self._db.get_connection()
+        # Delete in order: agent_logs, findings, scan_results, scan_phases,
+        # discovered_hosts, open_ports, then scan_job itself
+        for table in ["agent_logs", "scan_results", "findings", "scan_phases",
+                       "discovered_hosts", "open_ports"]:
+            await conn.execute(f"DELETE FROM {table} WHERE scan_job_id = ?", (str(job_id),))
+        await conn.execute("DELETE FROM scan_jobs WHERE id = ?", (str(job_id),))
+        await conn.commit()
+        return True
+
     @staticmethod
     def _row_to_scan_job(row: aiosqlite.Row) -> ScanJob:
         """Konvertiert eine DB-Zeile in ein ScanJob-Modell."""
@@ -208,6 +220,25 @@ class FindingRepository:
             )
         rows = await cursor.fetchall()
         return [self._row_to_finding(row) for row in rows]
+
+    async def get_by_id(self, finding_id: UUID) -> Finding | None:
+        conn = await self._db.get_connection()
+        conn.row_factory = aiosqlite.Row
+        cursor = await conn.execute("SELECT * FROM findings WHERE id = ?", (str(finding_id),))
+        row = await cursor.fetchone()
+        return self._row_to_finding(row) if row else None
+
+    async def delete(self, finding_id: UUID) -> bool:
+        conn = await self._db.get_connection()
+        await conn.execute("DELETE FROM findings WHERE id = ?", (str(finding_id),))
+        await conn.commit()
+        return True
+
+    async def delete_by_scan(self, scan_job_id: UUID) -> int:
+        conn = await self._db.get_connection()
+        cursor = await conn.execute("DELETE FROM findings WHERE scan_job_id = ?", (str(scan_job_id),))
+        await conn.commit()
+        return cursor.rowcount
 
     @staticmethod
     def _row_to_finding(row: aiosqlite.Row) -> Finding:
