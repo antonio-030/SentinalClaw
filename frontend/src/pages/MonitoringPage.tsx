@@ -112,6 +112,35 @@ export function MonitoringPage() {
           <InfoRow label="Docker" value={sys?.docker ?? '--'} ok={sys?.docker !== 'nicht verfuegbar'} />
           <InfoRow label="Tools" value="nmap 7.80, nuclei 3.3.7" />
           <InfoRow label="Isolation" value="cap_drop ALL + NET_RAW" />
+          <div className="mt-3 flex gap-2">
+            {!sys?.sandbox_running ? (
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch('/api/v1/sandbox/start', { method: 'POST' });
+                    // Status nach 2s aktualisieren
+                    setTimeout(() => window.location.reload(), 2000);
+                  } catch { /* ignore */ }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-status-success/10 border border-status-success/30 text-xs font-medium text-status-success hover:bg-status-success/20"
+              >
+                ▶ Sandbox starten
+              </button>
+            ) : (
+              <button
+                onClick={async () => {
+                  if (!confirm('Sandbox-Container wirklich stoppen?')) return;
+                  try {
+                    await fetch('/api/v1/sandbox/stop', { method: 'POST' });
+                    setTimeout(() => window.location.reload(), 2000);
+                  } catch { /* ignore */ }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-severity-critical/10 border border-severity-critical/30 text-xs font-medium text-severity-critical hover:bg-severity-critical/20"
+              >
+                ⏹ Sandbox stoppen
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Watchdog */}

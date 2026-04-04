@@ -132,6 +132,41 @@ async def health_check() -> HealthResponse:
     )
 
 
+@app.post("/api/v1/sandbox/start")
+async def start_sandbox() -> dict:
+    """Startet den Sandbox-Container."""
+    try:
+        import docker as docker_lib
+        client = docker_lib.from_env()
+        try:
+            container = client.containers.get("sentinelclaw-sandbox")
+            if container.status != "running":
+                container.start()
+                return {"status": "started", "message": "Sandbox-Container gestartet"}
+            return {"status": "already_running", "message": "Sandbox läuft bereits"}
+        except docker_lib.errors.NotFound:
+            return {"status": "not_found", "message": "Sandbox-Container nicht vorhanden. Bitte 'docker compose up -d sandbox' ausführen."}
+    except Exception as e:
+        logger.debug("Sandbox-Start fehlgeschlagen", error=str(e))
+        raise HTTPException(500, f"Sandbox konnte nicht gestartet werden: {e}")
+
+
+@app.post("/api/v1/sandbox/stop")
+async def stop_sandbox() -> dict:
+    """Stoppt den Sandbox-Container."""
+    try:
+        import docker as docker_lib
+        client = docker_lib.from_env()
+        container = client.containers.get("sentinelclaw-sandbox")
+        if container.status == "running":
+            container.stop()
+            return {"status": "stopped", "message": "Sandbox-Container gestoppt"}
+        return {"status": "already_stopped", "message": "Sandbox ist bereits gestoppt"}
+    except Exception as e:
+        logger.debug("Sandbox-Stop fehlgeschlagen", error=str(e))
+        raise HTTPException(500, f"Sandbox konnte nicht gestoppt werden: {e}")
+
+
 @app.post("/api/v1/kill")
 async def emergency_kill(request: KillRequest) -> dict:
     """Aktiviert den Kill-Switch — stoppt ALLE laufenden Scans."""
