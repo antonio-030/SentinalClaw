@@ -54,10 +54,14 @@ class OrchestratorAgent:
         target: str,
         scan_type: str = "recon",
         ports: str = "1-1000",
+        existing_scan_id: str | None = None,
     ) -> OrchestratorResult:
         """Führt einen vollständig orchestrierten Scan durch.
 
-        1. Erstellt Scan-Job in DB
+        existing_scan_id: Wenn gesetzt, wird kein neuer Job erstellt
+        sondern der bestehende genutzt (z.B. aus Chat oder API).
+
+        1. Erstellt Scan-Job in DB (oder nutzt bestehenden)
         2. Plant den Scan (mindestens 2 Phasen)
         3. Führt den Scan über NemoClaw-Runtime aus
         4. Analysiert Ergebnisse und erstellt Bericht
@@ -84,16 +88,23 @@ class OrchestratorAgent:
             plan=plan,
         )
 
-        # Scan-Job in DB erstellen
-        job = ScanJob(
-            target=target,
-            scan_type=scan_type,
-            max_escalation_level=self._scope.max_escalation_level,
-            token_budget=self._settings.llm_max_tokens_per_scan,
-            config={"ports": ports, "plan_phases": len(plan)},
-        )
-        await self._scan_repo.create(job)
-        await self._scan_repo.update_status(job.id, ScanStatus.RUNNING)
+        # Scan-Job: Bestehenden nutzen oder neuen erstellen
+        if existing_scan_id:
+            from uuid import UUID as _UUID
+            job = await self._scan_repo.get_by_id(_UUID(existing_scan_id))
+            if not job:
+                job = ScanJob(target=target, scan_type=scan_type, config={"ports": ports})
+                await self._scan_repo.create(job)
+        else:
+            job = ScanJob(
+                target=target,
+                scan_type=scan_type,
+                max_escalation_level=self._scope.max_escalation_level,
+                token_budget=self._settings.llm_max_tokens_per_scan,
+                config={"ports": ports, "plan_phases": len(plan)},
+            )
+            await self._scan_repo.create(job)
+            await self._scan_repo.update_status(job.id, ScanStatus.RUNNING)
 
         # Audit-Log: Scan gestartet
         await self._audit_repo.create(AuditLogEntry(

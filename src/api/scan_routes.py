@@ -132,7 +132,7 @@ async def _run_scan_background(
         )
 
         orchestrator = OrchestratorAgent(scope=scope)
-        await orchestrator.orchestrate_scan(target, ports=ports)
+        await orchestrator.orchestrate_scan(target, ports=ports, existing_scan_id=scan_id)
         await orchestrator.close()
 
     except Exception as error:
