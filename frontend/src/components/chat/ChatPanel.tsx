@@ -1,309 +1,171 @@
-// ── Agent Chat Panel — Hauptkomponente des Chat-Systems ─────────────
-//
-// Desktop: rechtes Seitenpanel (380px breit)
-// Mobile: Fullscreen Slide-Over, getoggled per Chat-Bubble-Button
-//
-// Features:
-// - Nachrichtenliste mit Auto-Scroll
-// - Scan-Selector Dropdown
-// - "Agent denkt..." Indikator
-// - Polling-basiert (kein WebSocket)
+// ── Agent Chat Panel — Vereinfachte robuste Version ─────────────────
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Bot, Minus, X, ChevronDown } from 'lucide-react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect, useRef } from 'react';
+import { Bot, X, Send } from 'lucide-react';
 import { api } from '../../services/api';
-import type { ChatMessage as ChatMessageType } from '../../types/api';
-import { ChatMessage } from './ChatMessage';
-import { ChatInput } from './ChatInput';
-
-// ── Query Keys ──────────────────────────────────────────────────────
-
-const chatKeys = {
-  history: (scanId?: string) => ['chat', 'history', scanId] as const,
-};
-
-// ── Props ───────────────────────────────────────────────────────────
+import type { ChatMessage as ChatMsg } from '../../types/api';
 
 interface ChatPanelProps {
-  /** Panel sichtbar? (Mobile-Toggle) */
   isOpen: boolean;
-  /** Panel schliessen (Mobile) */
   onClose: () => void;
 }
 
+interface LocalMessage {
+  id: string;
+  role: 'user' | 'agent' | 'system';
+  content: string;
+  timestamp: string;
+}
+
 export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
-  const queryClient = useQueryClient();
+  const [messages, setMessages] = useState<LocalMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Lokaler State
-  const [selectedScanId, setSelectedScanId] = useState<string | undefined>(undefined);
-  const [localMessages, setLocalMessages] = useState<ChatMessageType[]>([]);
-  const [isThinking, setIsThinking] = useState(false);
-  const [scanDropdownOpen, setScanDropdownOpen] = useState(false);
+  // Auto-Scroll bei neuen Nachrichten
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // Nachricht senden — direkt mit fetch, kein React Query
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || sending) return;
 
-  // ── Daten laden ─────────────────────────────────────────────────
+    // User-Nachricht sofort anzeigen
+    const userMsg: LocalMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: text,
+      timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setSending(true);
 
-  // Chat-Verlauf laden
-  const { data: history } = useQuery({
-    queryKey: chatKeys.history(selectedScanId),
-    queryFn: () => api.chat.history(selectedScanId),
-    refetchInterval: 5_000,
-    enabled: isOpen,
-  });
+    try {
+      const data = await api.chat.send(text);
 
-  // Scan-Liste fuer Dropdown
-  const { data: scans } = useQuery({
-    queryKey: ['scans'],
-    queryFn: api.scans.list,
-    staleTime: 10_000,
-  });
-
-  // Chat-Nachricht senden
-  const sendMutation = useMutation({
-    mutationFn: ({ message, scanId }: { message: string; scanId?: string }) =>
-      api.chat.send(message, scanId),
-    onSuccess: (data) => {
-      // Agent-Antwort als lokale Nachricht hinzufuegen
-      const agentMsg: ChatMessageType = {
-        id: crypto.randomUUID(),
+      const agentMsg: LocalMessage = {
+        id: (Date.now() + 1).toString(),
         role: 'agent',
         content: data.response,
-        message_type: 'text',
-        created_at: new Date().toISOString(),
-        scan_id: data.scan_id || selectedScanId,
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
       };
+      setMessages(prev => [...prev, agentMsg]);
 
-      setLocalMessages((prev) => [...prev, agentMsg]);
-      setIsThinking(false);
-
-      // Wenn ein Scan gestartet wurde, Scan-ID setzen
-      if (data.scan_started && data.scan_id) {
-        setSelectedScanId(data.scan_id);
-        // Scans-Liste invalidieren
-        queryClient.invalidateQueries({ queryKey: ['scans'] });
+      if (data.scan_started) {
+        const sysMsg: LocalMessage = {
+          id: (Date.now() + 2).toString(),
+          role: 'system',
+          content: `Scan gestartet! ID: ${data.scan_id}`,
+          timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        };
+        setMessages(prev => [...prev, sysMsg]);
       }
-
-      // Chat-Verlauf invalidieren
-      queryClient.invalidateQueries({ queryKey: chatKeys.history(selectedScanId) });
-    },
-    onError: () => {
-      const errorMsg: ChatMessageType = {
-        id: crypto.randomUUID(),
+    } catch (err) {
+      const errMsg: LocalMessage = {
+        id: (Date.now() + 1).toString(),
         role: 'system',
-        content: 'Fehler beim Senden der Nachricht. Bitte versuche es erneut.',
-        message_type: 'text',
-        created_at: new Date().toISOString(),
+        content: `Fehler: ${err instanceof Error ? err.message : 'Verbindung fehlgeschlagen'}`,
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
       };
-      setLocalMessages((prev) => [...prev, errorMsg]);
-      setIsThinking(false);
-    },
-  });
-
-  // ── Nachricht senden ──────────────────────────────────────────────
-
-  const handleSend = useCallback(
-    (message: string) => {
-      // User-Nachricht sofort lokal anzeigen (optimistic)
-      const userMsg: ChatMessageType = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: message,
-        message_type: 'text',
-        created_at: new Date().toISOString(),
-        scan_id: selectedScanId,
-      };
-
-      setLocalMessages((prev) => [...prev, userMsg]);
-      setIsThinking(true);
-
-      sendMutation.mutate({ message, scanId: selectedScanId });
-    },
-    [selectedScanId, sendMutation],
-  );
-
-  // ── Nachrichten zusammenfuehren (Server + lokal) ──────────────────
-
-  const allMessages = (() => {
-    const serverMsgs = history ?? [];
-    const serverIds = new Set(serverMsgs.map((m) => m.id));
-    // Lokale Nachrichten die noch nicht vom Server kommen
-    const uniqueLocal = localMessages.filter((m) => !serverIds.has(m.id));
-    return [...serverMsgs, ...uniqueLocal];
-  })();
-
-  // Lokale Nachrichten bereinigen wenn Server-Daten sich aendern
-  useEffect(() => {
-    if (history && history.length > 0) {
-      const serverIds = new Set(history.map((m) => m.id));
-      setLocalMessages((prev) => prev.filter((m) => !serverIds.has(m.id)));
+      setMessages(prev => [...prev, errMsg]);
+    } finally {
+      // IMMER entsperren, egal ob Erfolg oder Fehler
+      setSending(false);
     }
-  }, [history]);
-
-  // ── Auto-Scroll ───────────────────────────────────────────────────
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [allMessages.length, isThinking]);
-
-  // ── Scan wechseln -> lokale Nachrichten zuruecksetzen ─────────────
-
-  const handleScanChange = (scanId: string | undefined) => {
-    setSelectedScanId(scanId);
-    setLocalMessages([]);
-    setScanDropdownOpen(false);
-  };
-
-  // ── Dropdown schliessen bei Klick ausserhalb ──────────────────────
-
-  useEffect(() => {
-    if (!scanDropdownOpen) return;
-    const handler = () => setScanDropdownOpen(false);
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [scanDropdownOpen]);
-
-  // ── Render ────────────────────────────────────────────────────────
+  }
 
   if (!isOpen) return null;
 
   return (
     <>
       {/* Mobile Overlay */}
-      <div
-        className="fixed inset-0 z-40 bg-black/60 lg:hidden"
-        onClick={onClose}
-      />
+      <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={onClose} />
 
-      {/* Chat-Panel */}
-      <aside
-        className="
-          fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[380px]
-          lg:static lg:z-auto lg:w-[380px] lg:shrink-0
-          flex flex-col bg-bg-primary border-l border-border-subtle
-        "
-      >
-        {/* ── Header ──────────────────────────────────────────────── */}
-        <div className="shrink-0 h-14 flex items-center justify-between px-3 border-b border-border-subtle bg-bg-secondary">
+      {/* Panel */}
+      <aside className="fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[380px] lg:static lg:z-auto lg:w-[380px] lg:shrink-0 flex flex-col bg-bg-primary border-l border-border-subtle">
+        {/* Header */}
+        <div className="shrink-0 h-14 flex items-center justify-between px-4 border-b border-border-subtle bg-bg-secondary">
           <div className="flex items-center gap-2">
-            <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-accent/10 text-accent">
-              <Bot size={16} strokeWidth={2} />
-            </div>
+            <Bot size={18} className="text-accent" />
             <span className="text-sm font-semibold text-text-primary">Agent Chat</span>
           </div>
-
-          <div className="flex items-center gap-1">
-            {/* Scan-Selector */}
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setScanDropdownOpen(!scanDropdownOpen);
-                }}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-              >
-                <span className="max-w-[100px] truncate">
-                  {selectedScanId
-                    ? scans?.find((s) => s.id === selectedScanId)?.target ?? 'Scan'
-                    : 'Alle'}
-                </span>
-                <ChevronDown size={12} />
-              </button>
-
-              {scanDropdownOpen && (
-                <div className="absolute right-0 top-full mt-1 w-56 max-h-64 overflow-y-auto rounded-lg border border-border-subtle bg-bg-secondary shadow-xl z-50">
-                  <button
-                    onClick={() => handleScanChange(undefined)}
-                    className={`w-full text-left px-3 py-2 text-[12px] hover:bg-bg-tertiary transition-colors ${
-                      !selectedScanId ? 'text-accent font-medium' : 'text-text-secondary'
-                    }`}
-                  >
-                    Alle Nachrichten
-                  </button>
-                  {scans?.map((scan) => (
-                    <button
-                      key={scan.id}
-                      onClick={() => handleScanChange(scan.id)}
-                      className={`w-full text-left px-3 py-2 text-[12px] hover:bg-bg-tertiary transition-colors border-t border-border-subtle ${
-                        selectedScanId === scan.id ? 'text-accent font-medium' : 'text-text-secondary'
-                      }`}
-                    >
-                      <span className="block truncate">{scan.target}</span>
-                      <span className="text-[10px] text-text-tertiary">{scan.status}</span>
-                    </button>
-                  ))}
-                  {(!scans || scans.length === 0) && (
-                    <p className="px-3 py-2 text-[11px] text-text-tertiary">
-                      Keine Scans vorhanden
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Schliessen-Button */}
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-              aria-label="Chat minimieren"
-            >
-              <span className="hidden lg:block"><Minus size={16} /></span>
-              <span className="lg:hidden"><X size={16} /></span>
-            </button>
-          </div>
+          <button onClick={onClose} className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary" aria-label="Schließen">
+            <X size={18} />
+          </button>
         </div>
 
-        {/* ── Nachrichtenliste ────────────────────────────────────── */}
-        <div
-          ref={messagesContainerRef}
-          className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5"
-        >
-          {allMessages.length === 0 && !isThinking && (
+        {/* Nachrichten */}
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+          {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
-              <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-accent/10 text-accent mb-3">
-                <Bot size={24} strokeWidth={1.5} />
-              </div>
-              <p className="text-sm font-medium text-text-primary mb-1">
-                SentinelClaw Agent
-              </p>
-              <p className="text-[12px] text-text-tertiary leading-relaxed max-w-[260px]">
-                Starte einen Scan, analysiere Ergebnisse oder stelle eine Frage.
-                Probiere: "Scanne 10.10.10.1"
-              </p>
+              <Bot size={32} className="text-accent mb-3" />
+              <p className="text-sm text-text-primary mb-1">SentinelClaw Agent</p>
+              <p className="text-xs text-text-tertiary">Tippe eine Nachricht oder "Scanne scanme.nmap.org"</p>
             </div>
           )}
 
-          {allMessages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} />
+          {messages.map(msg => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-xl px-3 py-2 ${
+                msg.role === 'user'
+                  ? 'bg-accent/15 text-text-primary rounded-br-sm'
+                  : msg.role === 'system'
+                  ? 'bg-bg-tertiary text-text-tertiary text-center w-full rounded-lg'
+                  : 'bg-bg-secondary border border-border-subtle text-text-primary rounded-bl-sm'
+              }`}>
+                {msg.role === 'agent' && (
+                  <p className="text-[10px] font-semibold text-accent mb-1">Agent</p>
+                )}
+                <p className="text-[13px] whitespace-pre-wrap break-words">{msg.content}</p>
+                <p className="text-[10px] text-text-tertiary mt-1">{msg.timestamp}</p>
+              </div>
+            </div>
           ))}
 
-          {/* "Agent denkt..." Indikator */}
-          {isThinking && (
-            <div className="flex justify-start mb-2.5">
-              <div className="bg-bg-secondary rounded-xl rounded-bl-sm border border-border-subtle px-3.5 py-2.5">
-                <p className="text-[10px] font-semibold text-accent mb-1 uppercase tracking-wide">
-                  Agent
-                </p>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[12px] text-text-tertiary">Agent denkt</span>
+          {sending && (
+            <div className="flex justify-start">
+              <div className="bg-bg-secondary border border-border-subtle rounded-xl rounded-bl-sm px-3 py-2">
+                <p className="text-[10px] font-semibold text-accent mb-1">Agent</p>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-text-tertiary">denkt</span>
                   <span className="flex gap-0.5">
-                    <span className="w-1 h-1 bg-accent/60 rounded-full animate-bounce [animation-delay:0ms]" />
-                    <span className="w-1 h-1 bg-accent/60 rounded-full animate-bounce [animation-delay:150ms]" />
-                    <span className="w-1 h-1 bg-accent/60 rounded-full animate-bounce [animation-delay:300ms]" />
+                    <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </span>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Scroll-Anker */}
-          <div ref={messagesEndRef} />
+          <div ref={bottomRef} />
         </div>
 
-        {/* ── Eingabefeld ─────────────────────────────────────────── */}
-        <ChatInput onSend={handleSend} disabled={isThinking} />
+        {/* Eingabe — als Form damit Submit garantiert funktioniert */}
+        <form onSubmit={handleSend} className="flex items-center gap-2 p-3 border-t border-border-subtle bg-bg-secondary">
+          <input
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            disabled={sending}
+            placeholder="Nachricht..."
+            autoComplete="off"
+            className="flex-1 rounded-lg border border-border-subtle bg-bg-primary px-3 py-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/50 disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={sending || !input.trim()}
+            className="shrink-0 flex items-center justify-center h-12 w-12 rounded-lg bg-accent text-white active:bg-accent/70 disabled:opacity-30 touch-manipulation"
+            aria-label="Senden"
+          >
+            <Send size={20} />
+          </button>
+        </form>
       </aside>
     </>
   );
