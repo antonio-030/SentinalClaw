@@ -1,0 +1,398 @@
+
+SentinelClaw
+AI-gestützte Security Assessment Platform
+Proof of Concept — Lastenheft
+Version 0.1 — April 2026
+VERTRAULICH — NUR FÜR INTERNE NUTZUNG
+
+Eigenschaft
+Wert
+Dokument
+PoC Lastenheft
+Produkt
+SentinelClaw v0.1 (PoC)
+Autor
+Jaciel Antonio Acea Ruiz
+Status
+Entwurf
+Datum
+April 2026
+Klassifizierung
+Vertraulich
+
+1. Einleitung
+
+1.1 Zweck des Dokuments
+Dieses Lastenheft beschreibt die Anforderungen an den Proof of Concept (PoC) der Plattform SentinelClaw. Es definiert Was gebaut werden soll, nicht Wie. Das Dokument dient als Grundlage für die technische Umsetzung und spätere Abnahme des PoC.
+
+1.2 Hintergrund & Motivation
+Bestehende KI-gestützte Pentest-Tools (PentAGI, PentestGPT, Strix) sind ausnahmslos Cloud-basiert oder CLI-first. Für Unternehmen und Behörden mit strengen Datenschutz- und Compliance-Anforderungen (DSGVO, BSI Grundschutz, ISO 27001) ist keines dieser Tools einsetzbar, da Zieldaten, Scan-Ergebnisse und Findings über externe Server laufen.
+
+Kernproblem
+Es existiert kein Self-hosted, Enterprise-taugliches AI Security Assessment Tool mit Web-Oberfläche, konfigurierbaren Berechtigungen und Azure-OpenAI-Unterstützung.
+
+1.3 Ziel des PoC
+Der PoC soll beweisen, dass folgendes technisch realisierbar ist:
+	•	Ein KI-Agent kann autonom Pentest-Tools steuern und sinnvolle Ergebnisse liefern
+	•	Der gesamte Betrieb ist auf Kundenhardware ohne externe Datenabflüsse möglich
+	•	Claude (Anthropic API / Abo) funktioniert als LLM-Provider innerhalb von NemoClaw
+	•	Ein einfacher MCP-Server reicht als Schnittstelle zwischen Agent und Pentest-Tools
+
+
+2. Stakeholder & Rollen
+
+Rolle
+Person / Einheit
+Verantwortung
+Auftraggeber
+Jaciel Antonio Acea Ruiz
+Anforderungen, Abnahme
+Entwickler
+Jaciel Antonio Acea Ruiz
+Umsetzung PoC
+Testnutzer (PoC)
+Intern (Testumgebung)
+Validierung der Funktionen
+Zielkunde
+Enterprise / Behörden
+Später: produktiver Einsatz
+
+
+3. Systemübersicht
+
+3.1 Produktvision
+SentinelClaw
+SentinelClaw ist eine self-hosted KI-gestützte Security-Assessment-Plattform. Kunden installieren ein Docker-Image auf ihrer eigenen Infrastruktur. Ein Web-Setup-Wizard führt durch die Erstkonfiguration. KI-Agenten führen anschließend autonom Sicherheitsanalysen durch und generieren compliance-fähige Reports — ohne dass Daten das Unternehmensnetz verlassen.
+
+3.2 Abgrenzung PoC vs. Produkt
+Bereich
+PoC (dieses Dokument)
+Späteres Produkt
+Agenten
+Orchestrator + Recon-Agent
+Alle 6 Sub-Agenten
+Tools
+nmap, nuclei
+10+ Tools
+UI
+Keine (CLI / API)
+React Web-UI + Setup-Wizard
+LLM-Provider
+Claude (Anthropic API / Abo)
+Claude, Azure OpenAI, Ollama, ...
+Permissions
+Hardcoded Testkonfiguration
+RBAC, granulare Scopes
+Report
+JSON / Textausgabe
+PDF + DOCX, CVSS-Scores
+Lizenz
+Keine
+JWT-basiertes Lizenzmodell
+Deployment
+Lokal / Hetzner Testserver
+Docker Hub Image
+
+
+4. Funktionale Anforderungen (PoC)
+
+4.1 FA-01 — Orchestrator-Agent
+Attribut
+Beschreibung
+ID
+FA-01
+Bezeichnung
+Orchestrator-Agent
+Priorität
+MUSS
+Beschreibung
+Ein KI-Agent (Claude via NemoClaw) nimmt ein Scan-Ziel entgegen, erstellt einen Ausführungsplan und koordiniert den Recon-Agenten.
+
+Akzeptanzkriterien:
+	•	Agent startet nach Übergabe eines Ziels (IP / Domain) ohne manuelle Eingriffe
+	•	Agent erstellt einen strukturierten Plan mit mindestens 2 Phasen
+	•	Agent delegiert Ausführung an den Recon-Agenten via MCP
+	•	Agent liefert nach Abschluss eine strukturierte Zusammenfassung
+
+4.2 FA-02 — Recon-Agent
+Attribut
+Beschreibung
+ID
+FA-02
+Bezeichnung
+Recon-Agent
+Priorität
+MUSS
+Beschreibung
+Ein spezialisierter Sub-Agent führt Netzwerk-Reconnaissance auf dem definierten Ziel durch. Er nutzt ausschließlich die vom MCP-Server bereitgestellten Tools.
+
+Akzeptanzkriterien:
+	•	Agent führt Port-Scan (nmap) auf Ziel-IP durch
+	•	Agent identifiziert offene Ports und laufende Services
+	•	Agent führt Schwachstellen-Scan (nuclei) auf erkannte Services durch
+	•	Ergebnisse werden strukturiert (JSON) an Orchestrator zurückgegeben
+
+4.3 FA-03 — MCP-Server
+Attribut
+Beschreibung
+ID
+FA-03
+Bezeichnung
+MCP-Tool-Server
+Priorität
+MUSS
+Beschreibung
+Ein MCP-Server exponiert die Pentest-Tools als strukturierte Tools für den KI-Agenten. Alle Tool-Aufrufe laufen innerhalb des isolierten Sandbox-Containers.
+
+Bereitgestellte Tools im PoC:
+Tool-Name
+Funktion
+Parameter
+port_scan
+Nmap Port-Scan auf Ziel
+target, ports, flags
+vuln_scan
+Nuclei Template-Scan auf Ziel
+target, templates
+exec_command
+Freie Befehlsausführung (nur Sandbox)
+cmd, timeout
+parse_output
+Strukturierte Ausgabe-Analyse
+raw_output, format
+
+4.4 FA-04 — LLM-Provider: Claude via NemoClaw
+Attribut
+Beschreibung
+ID
+FA-04
+Bezeichnung
+Claude als LLM-Provider
+Priorität
+MUSS
+Beschreibung
+NemoClaw wird als Agent-Runtime eingesetzt. Claude (Anthropic Abo / API-Key) wird als Inference-Provider konfiguriert. Die Sandbox-Isolation von NemoClaw bleibt aktiv.
+
+Akzeptanzkriterien:
+	•	NemoClaw startet mit Claude als konfiguriertem Provider
+	•	Der Agent kommuniziert ausschließlich über den NemoClaw Inference-Router mit Claude
+	•	Kein direkter API-Call aus dem Sandbox-Container nach außen ohne Policy-Freigabe
+
+4.5 FA-05 — Sandbox-Isolation
+Attribut
+Beschreibung
+ID
+FA-05
+Bezeichnung
+Isolierter Ausführungscontainer
+Priorität
+MUSS
+Beschreibung
+Alle Tool-Ausführungen (nmap, nuclei etc.) laufen in einem isolierten Docker-Container. Der Container hat nur Netzwerkzugriff auf definierte Ziele.
+
+Akzeptanzkriterien:
+	•	Container kann keine beliebigen ausgehenden Verbindungen aufbauen
+	•	Tool-Ausführung schlägt fehl wenn Ziel nicht in Whitelist
+	•	Container-Prozesse haben keine Root-Rechte auf dem Host
+
+
+5. Nicht-funktionale Anforderungen
+
+ID
+Anforderung
+Beschreibung
+Priorität
+NFA-01
+Datenschutz
+Keine Scan-Daten verlassen den lokalen Host während des PoC
+MUSS
+NFA-02
+Reproduzierbarkeit
+PoC muss auf einem frischen Ubuntu 22.04 / macOS wiederholbar sein
+MUSS
+NFA-03
+Nachvollziehbarkeit
+Jeder Agent-Schritt wird geloggt (Zeitstempel, Tool, Output)
+SOLL
+NFA-04
+Laufzeit
+Ein vollständiger Recon-Durchlauf dauert maximal 10 Minuten
+SOLL
+NFA-05
+Fehlertransparenz
+Tool-Fehler werden dem Agenten zurückgemeldet; Agent reagiert sinnvoll
+SOLL
+NFA-06
+Autonomie
+Agent benötigt nach Zielübergabe keinen manuellen Eingriff
+MUSS
+
+
+6. Nicht-Ziele des PoC
+
+Folgende Punkte sind explizit NICHT Teil des PoC und werden erst in späteren Produktversionen umgesetzt:
+
+	•	Web-UI oder grafische Benutzeroberfläche
+	•	Setup-Wizard oder Onboarding-Flow
+	•	RBAC / Benutzer- und Rollenverwaltung
+	•	Azure OpenAI oder andere LLM-Provider (nur Claude im PoC)
+	•	Automatische PDF/DOCX-Reportgenerierung
+	•	Lizenz-System oder kommerzielle Distribution
+	•	Produktiver Einsatz gegen echte externe Ziele
+	•	Web App Agent, Network Agent, OSINT Agent (folgen nach PoC)
+	•	Metasploit-Integration oder aktive Exploitation
+
+Wichtig: PoC-Scope
+Der PoC wird ausschließlich gegen kontrollierte Testumgebungen (eigene VMs, HackTheBox, TryHackMe) ausgeführt. Kein Einsatz gegen Produktivsysteme oder fremde Infrastruktur.
+
+
+7. Technische Rahmenbedingungen
+
+7.1 Systemvoraussetzungen (PoC-Umgebung)
+Komponente
+Anforderung
+Betriebssystem
+Ubuntu 22.04 LTS oder macOS 14+
+Node.js
+Version 20 oder neuer
+Docker
+Docker Desktop oder Docker Engine + Compose
+RAM
+Mindestens 8 GB (16 GB empfohlen)
+CPU
+4 Kerne (NVIDIA GPU nicht erforderlich für Cloud-Inference)
+Netzwerk
+Internetzugang für Claude API und NemoClaw-Installation
+Claude Zugang
+Anthropic API-Key oder Claude Max Abo (Extra Usage aktiviert)
+
+7.2 Tech Stack PoC
+Schicht
+Technologie
+Zweck
+Agent-Runtime
+NemoClaw (NVIDIA, Open Source)
+Sandbox + Inference-Routing
+LLM
+Claude Sonnet 4 via Anthropic
+Reasoning & Planung
+MCP-Server
+Python 3.12 + FastMCP
+Tool-Abstraktion für Agent
+Pentest-Tools
+nmap, nuclei (im Container)
+Ausführung der Scans
+Sandbox
+Docker + Netzwerk-Policy
+Isolation der Tool-Ausführung
+Output
+JSON / Markdown
+Strukturierte Ergebnisse
+Logging
+Dateisystem-Log (Textdatei)
+Audit-Trail der Ausführung
+
+7.3 Abhängigkeiten & Risiken
+Abhängigkeit
+Risiko
+Maßnahme
+NemoClaw Alpha-Status
+API-Brüche möglich (pre-1.0)
+Abstraktion-Layer einbauen
+Claude Extra Usage
+Unerwartete Kosten bei langen Scans
+Token-Limit pro Lauf setzen
+nmap im Container
+Root-Rechte für Raw-Sockets nötig
+Capability NET_RAW prüfen
+nuclei Templates
+Veraltete Templates = falsche Ergebnisse
+Templates vor Lauf aktualisieren
+
+
+8. Abnahmekriterien des PoC
+
+Der PoC gilt als erfolgreich abgenommen wenn alle folgenden Kriterien erfüllt sind:
+
+#
+Kriterium
+Prüfmethode
+1
+Orchestrator startet autonom nach Zielübergabe
+Manueller Test
+2
+Recon-Agent führt nmap-Scan durch und liefert Ergebnis
+Log-Prüfung
+3
+Recon-Agent führt nuclei-Scan durch und liefert Ergebnis
+Log-Prüfung
+4
+Agent benötigt keinen manuellen Eingriff während Lauf
+Beobachtung
+5
+Alle Tool-Aufrufe laufen über MCP-Server (kein direktes exec)
+Code-Review
+6
+Kein Netzwerkzugriff aus Sandbox auf nicht-autorisierte Ziele
+Firewall-Log
+7
+Vollständiger Lauf dauert unter 10 Minuten (Testziel)
+Zeitmessung
+8
+Ergebnis ist strukturiert und menschenlesbar (JSON/Markdown)
+Sichtprüfung
+
+
+9. Meilensteine & Zeitplan
+
+Meilenstein
+Inhalt
+Zieldatum
+M1 — Setup
+NemoClaw + Docker lokal lauffähig, Claude verbunden
+KW 16 / April 2026
+M2 — MCP
+MCP-Server mit nmap und nuclei als Tools
+KW 17 / April 2026
+M3 — Recon
+Recon-Agent führt ersten echten Scan durch
+KW 18 / Mai 2026
+M4 — Orchestrator
+Orchestrator koordiniert Recon-Agent vollständig
+KW 19 / Mai 2026
+M5 — Abnahme
+Alle Abnahmekriterien erfüllt, PoC dokumentiert
+KW 20 / Mai 2026
+
+
+10. Glossar
+
+Begriff
+Erklärung
+Agent
+Autonomes KI-Programm das Aufgaben plant und ausführt ohne dauernde menschliche Steuerung
+Assessment
+Strukturierte Sicherheitsbewertung eines IT-Systems oder Netzwerks
+MCP
+Model Context Protocol — Schnittstelle zur Tool-Nutzung durch KI-Agenten
+NemoClaw
+NVIDIA Open-Source-Stack der OpenClaw mit Sandbox und Policy-Kontrolle absichert
+Nuclei
+Template-basierter Schwachstellen-Scanner (Project Discovery, Open Source)
+OpenClaw
+Open-Source Agent-Platform; Basis auf der NemoClaw aufsetzt
+Orchestrator
+Übergeordneter Agent der andere Sub-Agenten koordiniert und Ergebnisse sammelt
+PoC
+Proof of Concept — technischer Machbarkeitsnachweis vor Produktentwicklung
+Recon
+Reconnaissance — Informationsbeschaffung über ein Ziel als erste Pentest-Phase
+Sandbox
+Isolierte Ausführungsumgebung in der Code keine unerwünschten Seiteneffekte haben kann
+RBAC
+Role-Based Access Control — Zugriffssteuerung über Rollen und Berechtigungen
+TLP:AMBER
+Traffic Light Protocol Amber — vertraulich, nur für definierte Empfänger
+
+
+SentinelClaw PoC Lastenheft v0.1 — Vertraulich — April 2026 — Jaciel Antonio Acea Ruiz

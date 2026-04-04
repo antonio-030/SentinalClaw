@@ -15,9 +15,9 @@ from uuid import UUID
 from src.shared.config import get_settings
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger, setup_logging
-from src.shared.repositories import AuditLogRepository, ScanJobRepository
+from src.shared.repositories import AuditLogRepository, FindingRepository, ScanJobRepository
 from src.shared.scope_validator import ScopeValidator
-from src.shared.types.models import AuditLogEntry, ScanJob, ScanStatus
+from src.shared.types.models import AuditLogEntry, ScanJob, ScanStatus, Severity
 from src.shared.types.scope import PentestScope
 
 logger = get_logger(__name__)
@@ -244,6 +244,28 @@ def main() -> None:
     # Kill-Command
     subparsers.add_parser("kill", help="Alle laufenden Scans sofort stoppen (NOTAUS)")
 
+    # Findings-Command
+    find_parser = subparsers.add_parser("findings", help="Findings anzeigen und exportieren")
+    find_parser.add_argument(
+        "--severity", "-s",
+        choices=["critical", "high", "medium", "low", "info"],
+    )
+    find_parser.add_argument("--scan-id", help="Nur Findings eines bestimmten Scans")
+    find_parser.add_argument("--host", help="Nur Findings eines bestimmten Hosts")
+    find_parser.add_argument(
+        "--output", "-o", default="table", choices=["table", "json"],
+    )
+    find_parser.add_argument("--limit", "-n", type=int, default=50)
+
+    # Report-Command
+    report_parser = subparsers.add_parser("report", help="Report generieren")
+    report_parser.add_argument("--scan-id", required=True, help="Scan-ID")
+    report_parser.add_argument(
+        "--type", default="technical",
+        choices=["executive", "technical", "compliance"],
+    )
+    report_parser.add_argument("--output-file", "-f", help="In Datei schreiben")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -264,6 +286,10 @@ def main() -> None:
         asyncio.run(cmd_history(args))
     elif args.command == "kill":
         asyncio.run(cmd_kill())
+    elif args.command == "findings":
+        asyncio.run(cmd_findings(args))
+    elif args.command == "report":
+        asyncio.run(cmd_report(args))
 
 
 async def cmd_orchestrate(args: argparse.Namespace) -> None:
@@ -499,6 +525,132 @@ async def cmd_kill() -> None:
         pass
 
     print()
+
+
+async def cmd_findings(args: argparse.Namespace) -> None:
+    """Listet Findings aus der Datenbank, sortiert nach Schweregrad."""
+    settings = get_settings()
+    db = DatabaseManager(settings.db_path)
+    await db.initialize()
+    finding_repo = FindingRepository(db)
+
+    # Findings laden — je nach Filter-Kombination
+    if args.scan_id:
+        findings = await finding_repo.list_by_scan(UUID(args.scan_id))
+    else:
+        findings = await finding_repo.list_all(
+            severity=args.severity, limit=args.limit,
+        )
+
+    # Nachfilter: Host-Filter wird in-memory angewendet
+    if args.host:
+        findings = [f for f in findings if f.target_host == args.host]
+
+    # Severity-Filter auch bei scan-id-Abfrage anwenden
+    if args.severity and args.scan_id:
+        findings = [f for f in findings if f.severity.value == args.severity]
+
+    await db.close()
+
+    if args.output == "json":
+        _print_findings_json(findings)
+    else:
+        _print_findings_table(findings)
+
+
+def _print_findings_json(findings: list) -> None:
+    """Gibt Findings als JSON aus."""
+    data = [
+        {
+            "id": str(f.id),
+            "scan_job_id": str(f.scan_job_id),
+            "title": f.title,
+            "severity": f.severity.value,
+            "cvss_score": f.cvss_score,
+            "cve_id": f.cve_id,
+            "host": f.target_host,
+            "port": f.target_port,
+            "service": f.service,
+            "description": f.description,
+            "recommendation": f.recommendation,
+            "created_at": f.created_at.isoformat(),
+        }
+        for f in findings
+    ]
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _print_findings_table(findings: list) -> None:
+    """Gibt Findings als formatierte Tabelle aus."""
+    severity_icons: dict[str, str] = {
+        "critical": "🔴",
+        "high": "🟠",
+        "medium": "🟡",
+        "low": "🔵",
+        "info": "⚪",
+    }
+
+    print()
+    print("  SentinelClaw — Findings")
+    print("  " + "=" * 75)
+    print()
+
+    if not findings:
+        print("  Keine Findings gefunden.")
+        print()
+        return
+
+    # Tabellenkopf
+    print(
+        f"  {'Severity':<12} {'Title':<30} {'Host:Port':<22} "
+        f"{'CVE':<16} {'CVSS':>5}"
+    )
+    print(f"  {'─' * 85}")
+
+    for finding in findings:
+        icon = severity_icons.get(finding.severity.value, "⚪")
+        sev_label = f"{icon} {finding.severity.value.upper()}"
+        title = finding.title[:28] + ".." if len(finding.title) > 30 else finding.title
+        port_str = str(finding.target_port) if finding.target_port else "—"
+        host_port = f"{finding.target_host}:{port_str}"
+        cve = finding.cve_id or "—"
+        cvss = f"{finding.cvss_score:.1f}"
+        print(f"  {sev_label:<14} {title:<30} {host_port:<22} {cve:<16} {cvss:>5}")
+
+    print()
+    print(f"  Gesamt: {len(findings)} Findings")
+    print()
+
+
+async def cmd_report(args: argparse.Namespace) -> None:
+    """Generiert einen Report für einen bestimmten Scan."""
+    from src.shared.report_generator import ReportGenerator
+
+    settings = get_settings()
+    db = DatabaseManager(settings.db_path)
+    await db.initialize()
+
+    generator = ReportGenerator(db)
+    scan_id = UUID(args.scan_id)
+    report_type = args.type
+
+    # Report-Typ auswählen und generieren
+    if report_type == "executive":
+        content = await generator.generate_executive_summary(scan_id)
+    elif report_type == "compliance":
+        content = await generator.generate_compliance_report(scan_id)
+    else:
+        content = await generator.generate_technical_report(scan_id)
+
+    await db.close()
+
+    # Ausgabe: in Datei oder auf stdout
+    if args.output_file:
+        output_path = Path(args.output_file)
+        output_path.write_text(content, encoding="utf-8")
+        print(f"\n  ✅ Report geschrieben: {output_path.resolve()}\n")
+    else:
+        print(content)
 
 
 if __name__ == "__main__":

@@ -114,14 +114,19 @@ class OrchestratorAgent:
         ))
 
         try:
-            # Recon-Agent über NemoClaw-Runtime ausführen
-            recon_agent = ReconAgent(runtime=self._runtime, scope=self._scope)
+            # Multi-Phase Scan ausführen (3 separate Agent-Aufrufe)
+            from src.orchestrator.multi_phase import run_multi_phase_scan
 
-            # Phasen-Status aktualisieren
             for phase in plan:
                 phase.status = "running"
 
-            recon_result = await recon_agent.run_reconnaissance(target, ports=ports)
+            recon_result = await run_multi_phase_scan(
+                target=target,
+                ports=ports,
+                allowed_targets=self._scope.targets_include,
+                max_escalation_level=self._scope.max_escalation_level,
+                runtime=self._runtime,
+            )
 
             # Phasen als abgeschlossen markieren
             for phase in plan:

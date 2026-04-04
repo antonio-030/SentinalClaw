@@ -192,6 +192,23 @@ class FindingRepository:
         rows = await cursor.fetchall()
         return [self._row_to_finding(row) for row in rows]
 
+    async def list_all(self, severity: str | None = None, limit: int = 100) -> list[Finding]:
+        """Listet alle Findings, optional gefiltert nach Schweregrad."""
+        conn = await self._db.get_connection()
+        conn.row_factory = aiosqlite.Row
+        if severity:
+            cursor = await conn.execute(
+                "SELECT * FROM findings WHERE severity = ? ORDER BY cvss_score DESC LIMIT ?",
+                (severity, limit),
+            )
+        else:
+            cursor = await conn.execute(
+                "SELECT * FROM findings ORDER BY cvss_score DESC, created_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [self._row_to_finding(row) for row in rows]
+
     @staticmethod
     def _row_to_finding(row: aiosqlite.Row) -> Finding:
         """Konvertiert eine DB-Zeile in ein Finding-Modell."""
