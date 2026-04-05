@@ -246,6 +246,14 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
                   </span>
                   <span className="text-[10px] text-text-tertiary tabular-nums font-mono">{thinkingSeconds}s</span>
                 </div>
+                {thinkingSeconds > 15 && (
+                  <button
+                    onClick={() => setSending(false)}
+                    className="mt-2 text-[10px] text-severity-critical hover:underline"
+                  >
+                    Abbrechen
+                  </button>
+                )}
               </div>
             </div>
           )}
