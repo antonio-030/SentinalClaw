@@ -58,12 +58,18 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
   clearTimeout(timeoutId);
 
-  if (res.status === 401) {
-    // Token abgelaufen — automatisch ausloggen
+  if (res.status === 401 && !url.includes('/auth/login')) {
+    // Token abgelaufen — ausloggen (kein Reload, App zeigt Login-Seite)
     localStorage.removeItem('sc_token');
     localStorage.removeItem('sc_user');
-    window.location.reload();
-    throw new Error('Session abgelaufen — bitte neu einloggen');
+    // Zustand-Store direkt updaten
+    try {
+      const { useAuthStore } = await import('../stores/authStore');
+      useAuthStore.getState().logout();
+    } catch {
+      // Store nicht verfügbar — Seite wird trotzdem Login zeigen beim nächsten Render
+    }
+    throw new Error('Session abgelaufen');
   }
 
   if (!res.ok) {
