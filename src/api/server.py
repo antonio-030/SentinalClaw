@@ -57,6 +57,15 @@ async def lifespan(app: FastAPI):
     # Hängende Scans aufräumen (>10min running = failed)
     await _cleanup_stuck_scans(_db)
 
+    # Kill-Switch zurücksetzen falls er noch aktiv ist (vom letzten Lauf)
+    from src.shared.kill_switch import KillSwitch
+    if KillSwitch().is_active():
+        KillSwitch().reset()
+        logger.info("Kill-Switch zurückgesetzt (war aktiv vom letzten Lauf)")
+
+    # Sandbox-Container starten falls gestoppt
+    await _ensure_sandbox_running()
+
     logger.info("API-Server gestartet", port=settings.mcp_port)
 
     yield
@@ -135,6 +144,27 @@ app.include_router(scan_router)
 app.include_router(scan_detail_router)
 app.include_router(finding_router)
 app.include_router(chat_router)
+
+
+# ─── Auto-Start: Sandbox beim Server-Start sicherstellen ─────────
+
+
+async def _ensure_sandbox_running() -> None:
+    """Startet den Sandbox-Container falls er gestoppt ist."""
+    try:
+        import docker as docker_lib
+        client = docker_lib.from_env()
+        try:
+            container = client.containers.get("sentinelclaw-sandbox")
+            if container.status != "running":
+                container.start()
+                logger.info("Sandbox-Container automatisch gestartet")
+            else:
+                logger.info("Sandbox-Container laeuft bereits")
+        except docker_lib.errors.NotFound:
+            logger.warning("Sandbox-Container nicht gefunden")
+    except Exception as e:
+        logger.debug("Sandbox-Auto-Start fehlgeschlagen", error=str(e))
 
 
 # ─── Cleanup: Hängende Scans aufräumen ────────────────────────────

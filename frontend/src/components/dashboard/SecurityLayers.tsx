@@ -8,35 +8,44 @@ interface LayerProps {
   active: boolean;
   color: string;
   details: string[];
+  fixAction?: () => void;
+  fixLabel?: string;
 }
 
-function Layer({ name, description, icon, active, color, details }: LayerProps) {
+function Layer({ name, description, icon, active, color, details, fixAction, fixLabel }: LayerProps) {
   return (
     <div className={`
       relative flex items-start gap-3 rounded-lg border p-3
       ${active
         ? `border-${color}/30 bg-${color}/5`
-        : 'border-border-subtle bg-bg-tertiary/30 opacity-50'
+        : 'border-severity-critical/20 bg-severity-critical/5'
       }
     `}>
-      {/* Verbindungslinie zum nächsten Layer */}
       <div className="absolute left-6 top-full w-px h-2 bg-border-subtle" />
 
       <div className={`
         flex items-center justify-center w-8 h-8 rounded-lg shrink-0
-        ${active ? `bg-${color}/10 text-${color}` : 'bg-bg-tertiary text-text-tertiary'}
+        ${active ? `bg-${color}/10 text-${color}` : 'bg-severity-critical/10 text-severity-critical'}
       `}>
         {icon}
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
+        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
           <h4 className="text-xs font-semibold text-text-primary">{name}</h4>
           <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-            active ? 'bg-status-success/10 text-status-success' : 'bg-bg-tertiary text-text-tertiary'
+            active ? 'bg-status-success/10 text-status-success' : 'bg-severity-critical/10 text-severity-critical'
           }`}>
-            {active ? 'AKTIV' : 'INAKTIV'}
+            {active ? '✅ AKTIV' : '❌ INAKTIV'}
           </span>
+          {!active && fixAction && (
+            <button
+              onClick={fixAction}
+              className="text-[10px] px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 font-medium touch-manipulation"
+            >
+              {fixLabel || 'Starten'}
+            </button>
+          )}
         </div>
         <p className="text-[11px] text-text-secondary mb-1.5">{description}</p>
         <div className="flex flex-wrap gap-1">
@@ -90,6 +99,11 @@ export function SecurityLayers() {
       active: !!sys?.sandbox_running,
       color: 'status-success',
       details: ['cap_drop ALL', 'NET_RAW', 'read-only FS', 'non-root', 'PID-Limit 256'],
+      fixAction: !sys?.sandbox_running ? async () => {
+        await fetch('/api/v1/sandbox/start', { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('sc_token')}` } });
+        setTimeout(() => window.location.reload(), 2000);
+      } : undefined,
+      fixLabel: 'Sandbox starten',
     },
     {
       name: 'Netzwerk-Isolation',
