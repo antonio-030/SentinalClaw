@@ -193,17 +193,28 @@ async def _ask_claude(prompt: str) -> str:
         # Prompt kürzen damit Claude schneller antwortet
         short_prompt = prompt[:4000]
 
-        # Claude CLI: --print Modus (kein Agent, nur Textantwort)
+        # Claude CLI: --print + JSON output (schneller als Markdown)
         proc = await asyncio.create_subprocess_exec(
             claude_bin, "--print",
-            "-p", short_prompt,
+            "--output-format", "json",
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=short_prompt.encode("utf-8")),
+            timeout=120,
+        )
 
         if proc.returncode == 0 and stdout:
-            return stdout.decode("utf-8", errors="replace").strip()
+            raw = stdout.decode("utf-8", errors="replace").strip()
+            # JSON output parsen wenn möglich
+            try:
+                import json as _json
+                data = _json.loads(raw)
+                return data.get("result", data.get("content", raw))
+            except Exception:
+                return raw
 
         logger.error(
             "Claude CLI Fehler",
@@ -560,11 +571,8 @@ async def _process_chat_message(message: str, scan_id: str | None) -> ChatRespon
         return ChatResponseModel(response=response_text, scan_started=True, scan_id=new_scan_id)
 
     # 2. ALLES ANDERE: Claude als Orchestrator-Agent
-    prompt = (
-        f"Du bist der SentinelClaw Orchestrator-Agent. "
-        f"Antworte kurz, auf Deutsch, als Security-Experte.\n"
-        f"User: {message}"
-    )
+    # Prompt so kurz wie möglich für schnelle Antwort
+    prompt = f"Antworte kurz auf Deutsch als Security-Agent: {message}"
 
     response_text = await _ask_claude(prompt)
     try:
