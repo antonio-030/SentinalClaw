@@ -37,8 +37,8 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Timeout: 180s für Chat-Anfragen, 30s für alles andere
-  const timeoutMs = url.includes('/chat') ? 180_000 : 30_000;
+  // Timeout: 6 Min für Chat (Agent braucht Zeit), 30s für Rest
+  const timeoutMs = url.includes('/chat') ? 360_000 : 30_000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
