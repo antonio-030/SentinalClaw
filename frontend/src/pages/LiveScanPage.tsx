@@ -18,8 +18,9 @@ import { useCancelScan, queryKeys } from '../hooks/useApi';
 import type { ScanPhase } from '../types/api';
 
 function formatElapsed(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+  const sec = Math.floor(seconds);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
@@ -67,12 +68,7 @@ export function LiveScanPage() {
 
   const isRunning = scan?.status === 'running' || scan?.status === 'pending';
 
-  // Redirect to detail page if scan is not running
-  useEffect(() => {
-    if (scan && !isRunning) {
-      navigate(`/scans/${id}`, { replace: true });
-    }
-  }, [scan, isRunning, navigate, id]);
+  // KEIN Auto-Redirect — User will den Endzustand sehen
 
   // Elapsed time counter
   useEffect(() => {
@@ -154,6 +150,40 @@ export function LiveScanPage() {
           )}
         </div>
       </div>
+
+      {/* Status-Banner */}
+      {isRunning && (
+        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 flex items-center gap-3">
+          <span className="flex gap-0.5 shrink-0">
+            <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </span>
+          <div>
+            <p className="text-sm font-medium text-text-primary">Scan läuft — {formatElapsed(elapsed)}</p>
+            <p className="text-xs text-text-secondary">Agent führt Phasen autonom aus. Die Seite aktualisiert sich alle 3 Sekunden.</p>
+          </div>
+        </div>
+      )}
+      {scan?.status === 'completed' && (
+        <div className="rounded-lg border border-status-success/30 bg-status-success/5 p-3 flex items-center gap-3">
+          <CheckCircle2 size={18} className="text-status-success shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-text-primary">Scan abgeschlossen</p>
+            <p className="text-xs text-text-secondary">{totalHosts} Hosts, {totalPorts} Ports, {totalFindings} Findings in {formatElapsed(elapsed)}</p>
+          </div>
+          <Link to={`/scans/${id}`} className="ml-auto text-xs text-accent hover:underline shrink-0">Details →</Link>
+        </div>
+      )}
+      {scan?.status === 'failed' && (
+        <div className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 flex items-center gap-3">
+          <OctagonX size={18} className="text-status-error shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-text-primary">Scan fehlgeschlagen</p>
+            <p className="text-xs text-text-secondary">Einige Phasen konnten nicht abgeschlossen werden.</p>
+          </div>
+        </div>
+      )}
 
       {/* Live counters */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -241,17 +271,35 @@ export function LiveScanPage() {
                 </span>
               )}
             </div>
+            {/* Ergebnis-Zähler */}
             {(phase.hosts_found > 0 || phase.ports_found > 0 || phase.findings_found > 0) && (
               <div className="mt-2.5 flex items-center gap-4 text-xs text-text-secondary">
                 {phase.hosts_found > 0 && (
-                  <span>{phase.hosts_found} Host{phase.hosts_found !== 1 ? 's' : ''}</span>
+                  <span>🖥 {phase.hosts_found} Host{phase.hosts_found !== 1 ? 's' : ''}</span>
                 )}
                 {phase.ports_found > 0 && (
-                  <span>{phase.ports_found} Port{phase.ports_found !== 1 ? 's' : ''}</span>
+                  <span>🔌 {phase.ports_found} Port{phase.ports_found !== 1 ? 's' : ''}</span>
                 )}
                 {phase.findings_found > 0 && (
-                  <span>{phase.findings_found} Finding{phase.findings_found !== 1 ? 's' : ''}</span>
+                  <span>⚠ {phase.findings_found} Finding{phase.findings_found !== 1 ? 's' : ''}</span>
                 )}
+              </div>
+            )}
+            {/* Laufende Phase: Live-Info */}
+            {phase.status === 'running' && (
+              <div className="mt-2.5 flex items-center gap-2 text-xs text-accent">
+                <span className="flex gap-0.5">
+                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </span>
+                <span>Claude Agent arbeitet — nmap/nuclei wird in der Sandbox ausgeführt...</span>
+              </div>
+            )}
+            {/* Fehlgeschlagene Phase: Fehlermeldung */}
+            {phase.status === 'failed' && (
+              <div className="mt-2.5 text-xs text-status-error">
+                Phase fehlgeschlagen — Agent versucht nächste Phase
               </div>
             )}
           </div>
