@@ -56,28 +56,28 @@ export function DashboardPage() {
       {/* Metric cards — 2 Spalten auf Mobile, 4 auf Desktop */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
-          label="Running Scans"
+          label="Laufende Scans"
           value={runningScans}
           icon={Radar}
           color="text-accent"
           iconColor="text-accent"
         />
         <MetricCard
-          label="Total Findings"
+          label="Findings gesamt"
           value={findings.length}
           icon={AlertTriangle}
           color="text-severity-medium"
           iconColor="text-severity-medium"
         />
         <MetricCard
-          label="Critical Findings"
+          label="Kritische Findings"
           value={criticalFindings}
           icon={ShieldAlert}
           color="text-severity-critical"
           iconColor="text-severity-critical"
         />
         <MetricCard
-          label="System Status"
+          label="System-Status"
           value={systemOnline ? 'Online' : 'Offline'}
           icon={Activity}
           color={systemOnline ? 'text-status-success' : 'text-status-error'}
@@ -106,7 +106,7 @@ export function DashboardPage() {
                 {recentScans.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-5 py-8 text-center text-sm text-text-tertiary">
-                      No scans yet
+                      Noch keine Scans
                     </td>
                   </tr>
                 )}
@@ -133,7 +133,7 @@ export function DashboardPage() {
           <div className="divide-y divide-border-subtle">
             {recentFindings.length === 0 && (
               <div className="px-5 py-8 text-center text-sm text-text-tertiary">
-                No findings yet
+                Noch keine Findings
               </div>
             )}
             {recentFindings.map((finding: Finding) => (

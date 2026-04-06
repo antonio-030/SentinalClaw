@@ -8,11 +8,11 @@ import { compareSeverity } from '../utils/format';
 import type { Finding, Severity } from '../types/api';
 
 const severityTabs: Array<{ label: string; value: string }> = [
-  { label: 'All', value: '' },
-  { label: 'Critical', value: 'critical' },
-  { label: 'High', value: 'high' },
-  { label: 'Medium', value: 'medium' },
-  { label: 'Low', value: 'low' },
+  { label: 'Alle', value: '' },
+  { label: 'Kritisch', value: 'critical' },
+  { label: 'Hoch', value: 'high' },
+  { label: 'Mittel', value: 'medium' },
+  { label: 'Niedrig', value: 'low' },
 ];
 
 export function FindingsPage() {
@@ -75,9 +75,9 @@ export function FindingsPage() {
                 <tr>
                   <td colSpan={5} className="px-5 py-12 text-center">
                     <AlertTriangle size={28} className="mx-auto mb-3 text-text-tertiary" strokeWidth={1.5} />
-                    <p className="text-sm text-text-tertiary">No findings</p>
+                    <p className="text-sm text-text-tertiary">Keine Findings</p>
                     <p className="text-xs text-text-tertiary mt-1">
-                      {activeFilter ? `No ${activeFilter} findings found` : 'Run a scan to discover vulnerabilities'}
+                      {activeFilter ? `Keine ${activeFilter}-Findings gefunden` : 'Starte einen Scan um Schwachstellen zu finden'}
                     </p>
                   </td>
                 </tr>
