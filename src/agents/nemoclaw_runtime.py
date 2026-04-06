@@ -104,35 +104,37 @@ class NemoClawRuntime:
         if KillSwitch().is_active():
             raise RuntimeError("Kill-Switch ist aktiv")
 
-        # Verfügbarkeit prüfen — im Debug-Modus nur Warnung
+        # Verfügbarkeit prüfen
         status = self.check_availability()
-        if not status["available"]:
-            from src.shared.config import get_settings
-            if not get_settings().debug:
-                raise RuntimeError(f"NemoClaw nicht verfügbar: {status['reason']}")
-            logger.warning("NemoClaw nicht verfügbar, versuche trotzdem", reason=status["reason"])
+        use_docker_fallback = not status["available"]
+
+        from src.shared.config import get_settings
+        if use_docker_fallback and not get_settings().debug:
+            raise RuntimeError(f"NemoClaw nicht verfügbar: {status['reason']}")
 
         if not session_id:
             session_id = f"sc-{uuid4().hex[:8]}"
 
-        # User-Nachricht zusammenbauen (ggf. mit History)
         full_message = _build_user_message(user_message, messages)
 
-        # OpenClaw Agent-Befehl in der Sandbox ausführen
-        cli_cmd = _build_cli_command(system_prompt, full_message)
-        ssh_args = _build_ssh_command(self._config)
-
-        logger.info(
-            "NemoClaw Inference gestartet",
-            sandbox=self._config.sandbox_name,
-            session_id=session_id,
-        )
-
-        process = await asyncio.create_subprocess_exec(
-            *ssh_args, cli_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        if use_docker_fallback:
+            # Dev-Fallback: Claude API direkt nutzen (ohne NemoClaw/OpenClaw)
+            logger.info("NemoClaw Fallback: Claude API direkt", session_id=session_id)
+            return await self._fallback_claude_api(system_prompt, full_message, session_id)
+        else:
+            # Produktion: OpenClaw via NemoClaw/OpenShell SSH
+            cli_cmd = _build_cli_command(system_prompt, full_message)
+            ssh_args = _build_ssh_command(self._config)
+            logger.info(
+                "NemoClaw Inference gestartet",
+                sandbox=self._config.sandbox_name,
+                session_id=session_id,
+            )
+            process = await asyncio.create_subprocess_exec(
+                *ssh_args, cli_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         self._current_process = process
 
         # Streaming: stdout Zeile für Zeile lesen und live pushen
@@ -170,6 +172,31 @@ class NemoClawRuntime:
 
         return AgentResult(
             final_output=text,
+            steps_taken=0,
+            session_id=session_id,
+        )
+
+    async def _fallback_claude_api(
+        self, system_prompt: str, user_message: str, session_id: str,
+    ) -> AgentResult:
+        """Dev-Fallback: Claude API direkt nutzen wenn NemoClaw nicht da."""
+        try:
+            from src.agents.claude_api_provider import ClaudeApiProvider
+            provider = ClaudeApiProvider()
+        except Exception as err:
+            raise RuntimeError(
+                "NemoClaw nicht verfügbar und Claude API-Fallback fehlgeschlagen. "
+                "Setze SENTINEL_CLAUDE_API_KEY in .env oder installiere NemoClaw."
+            ) from err
+
+        from src.shared.types.agent_runtime import LlmMessage
+        messages = [
+            LlmMessage(role="system", content=system_prompt),
+            LlmMessage(role="user", content=user_message),
+        ]
+        response = await provider.send_messages(messages)
+        return AgentResult(
+            final_output=response.content,
             steps_taken=0,
             session_id=session_id,
         )
