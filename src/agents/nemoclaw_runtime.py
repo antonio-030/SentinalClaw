@@ -78,13 +78,7 @@ def _build_cli_command(
 
 
 class NemoClawRuntime:
-    """Agent-Runtime basierend auf NemoClaw/OpenShell.
-
-    Führt den OpenClaw-Agent 'sentinelclaw' in der isolierten
-    OpenShell-Sandbox aus. Die Sandbox bietet Landlock + seccomp +
-    netns Isolation. Der LLM-Provider ist über den OpenShell
-    Gateway konfigurierbar.
-    """
+    """Agent-Runtime: OpenClaw in NemoClaw/OpenShell-Sandbox."""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -106,11 +100,7 @@ class NemoClawRuntime:
         session_id: str | None = None,
         messages: list[dict[str, str]] | None = None,
     ) -> AgentResult:
-        """Führt den OpenClaw-Agent in der NemoClaw-Sandbox aus.
-
-        Jeder Aufruf ist eine frische Session (kein akkumulierter Kontext).
-        Chat-History wird über den user_message-Parameter mitgesendet.
-        """
+        """Führt OpenClaw-Agent aus. Streamt stdout live über WebSocket."""
         if KillSwitch().is_active():
             raise RuntimeError("Kill-Switch ist aktiv")
 
@@ -142,10 +132,13 @@ class NemoClawRuntime:
         )
         self._current_process = process
 
+        # Streaming: stdout Zeile für Zeile lesen und live pushen
+        lines: list[str] = []
         try:
             total_timeout = self._config.agent_timeout + 30
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=total_timeout,
+            lines = await asyncio.wait_for(
+                self._stream_output(process, session_id),
+                timeout=total_timeout,
             )
         except TimeoutError:
             process.kill()
@@ -155,10 +148,13 @@ class NemoClawRuntime:
         finally:
             self._current_process = None
 
-        text = stdout.decode("utf-8", errors="replace").strip()
+        text = "\n".join(lines).strip()
 
         if not text:
-            err = stderr.decode("utf-8", errors="replace").strip()
+            err = ""
+            if process.stderr:
+                raw = await process.stderr.read()
+                err = raw.decode("utf-8", errors="replace").strip()
             if process.returncode != 0:
                 raise RuntimeError(f"NemoClaw Fehler: {err[:300]}")
             raise RuntimeError("NemoClaw: Keine Antwort erhalten")
@@ -174,6 +170,62 @@ class NemoClawRuntime:
             steps_taken=0,
             session_id=session_id,
         )
+
+    async def _stream_output(
+        self, process: asyncio.subprocess.Process, session_id: str,
+    ) -> list[str]:
+        """Liest stdout zeilenweise und pusht live über WebSocket."""
+        lines: list[str] = []
+        assert process.stdout is not None
+        try:
+            from src.api.websocket_manager import ws_manager
+        except Exception:
+            ws_manager = None  # type: ignore[assignment]
+        while True:
+            raw_line = await process.stdout.readline()
+            if not raw_line:
+                break
+            line = raw_line.decode("utf-8", errors="replace").rstrip()
+            lines.append(line)
+
+            # Live-Push über WebSocket wenn verfügbar
+            if ws_manager is None:
+                continue
+
+            try:
+                # Tool-Erkennung: Bash-Befehle und deren Output
+                if line.startswith("$ ") or line.startswith("❯ "):
+                    await ws_manager.broadcast("agent_step", {
+                        "type": "tool_start",
+                        "tool": "bash",
+                        "command": line[2:][:200],
+                    })
+                elif line.startswith("✓") or line.startswith("✅"):
+                    await ws_manager.broadcast("agent_step", {
+                        "type": "tool_result",
+                        "tool": "bash",
+                        "success": True,
+                        "output_preview": line[:200],
+                    })
+                elif line.startswith("✗") or line.startswith("❌"):
+                    await ws_manager.broadcast("agent_step", {
+                        "type": "tool_result",
+                        "tool": "bash",
+                        "success": False,
+                        "output_preview": line[:200],
+                    })
+                elif len(lines) % 10 == 0:
+                    # Alle 10 Zeilen ein Thinking-Update
+                    await ws_manager.broadcast("agent_step", {
+                        "type": "thinking",
+                        "message": f"Agent arbeitet... ({len(lines)} Zeilen)",
+                    })
+            except Exception:
+                pass  # WS-Push Fehler ignorieren
+
+        # Warten bis Prozess beendet
+        await process.wait()
+        return lines
 
     async def stop(self) -> None:
         """Stoppt den laufenden Agent und aktiviert den Kill-Switch."""
@@ -239,30 +291,15 @@ class NemoClawRuntime:
 
 
 def _build_user_message(
-    current_message: str,
-    messages: list[dict[str, str]] | None,
+    current_message: str, messages: list[dict[str, str]] | None,
 ) -> str:
-    """Baut die User-Nachricht mit optionaler Chat-History.
-
-    Da der OpenClaw-Agent im --print Modus nur eine einzige
-    Nachricht akzeptiert, wird die History als Kontext-Block
-    vorangestellt.
-    """
+    """Baut User-Nachricht mit optionaler Chat-History als Kontext-Block."""
     if not messages:
         return current_message
-
-    # Letzte Nachricht ist die aktuelle User-Nachricht
-    # Die vorherigen sind History-Kontext
-    history_parts: list[str] = []
+    parts = []
     for msg in messages[:-1]:
         role = "User" if msg["role"] == "user" else "Agent"
-        history_parts.append(f"[{role}]: {msg['content']}")
-
-    if not history_parts:
+        parts.append(f"[{role}]: {msg['content']}")
+    if not parts:
         return current_message
-
-    history_block = "\n".join(history_parts)
-    return (
-        f"[Bisheriger Chat-Verlauf]\n{history_block}\n\n"
-        f"[Aktuelle Nachricht]\n{current_message}"
-    )
+    return f"[Chat-Verlauf]\n{chr(10).join(parts)}\n\n[Nachricht]\n{current_message}"
