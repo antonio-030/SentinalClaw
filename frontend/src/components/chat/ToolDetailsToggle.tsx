@@ -115,7 +115,7 @@ export function ToolDetailsToggle({ metadata }: ToolDetailsToggleProps) {
 
           {/* Sandbox-Logs */}
           {(showLogs || (toolCount === 0 && logCount > 0)) && parsed.logs && (
-            <div className="rounded bg-[#0a0c10] px-2.5 py-2 max-h-40 overflow-y-auto">
+            <div className="rounded bg-[#0a0c10] px-2.5 py-2 max-h-60 overflow-y-auto overflow-x-auto">
               {parsed.logs.map((log, i) => {
                 const color = log.type === 'tool_start' ? 'text-accent'
                   : log.type === 'tool_result' ? 'text-status-success'
@@ -126,7 +126,7 @@ export function ToolDetailsToggle({ metadata }: ToolDetailsToggleProps) {
                   : log.type === 'thinking' ? '●'
                   : '│';
                 return (
-                  <div key={`l-${i}`} className={`font-mono text-[10px] leading-relaxed ${color} truncate`}>
+                  <div key={`l-${i}`} className={`font-mono text-[10px] leading-relaxed ${color} whitespace-nowrap`}>
                     <span className="text-text-tertiary mr-1">{icon}</span>
                     {log.message}
                   </div>

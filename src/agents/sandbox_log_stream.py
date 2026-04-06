@@ -61,6 +61,12 @@ async def stream_sandbox_logs(sandbox_name: str) -> None:
             line = _ANSI_RE.sub("", line).strip()
             if not line:
                 continue
+            # SSH-Handshake-Noise filtern — nur relevante Logs durchlassen
+            if any(noise in line for noise in (
+                "SSH tunnel:", "SSH connection:", "SSH handshake",
+                "preface received", "preface_len=",
+            )):
+                continue
             event = classify_log_line(line)
             try:
                 await ws_manager.broadcast("agent_step", event)
