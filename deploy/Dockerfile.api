@@ -1,0 +1,30 @@
+# SentinelClaw API — Production Dockerfile
+# Python 3.12 mit uvicorn, laeuft als non-root User
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# System-Dependencies (curl fuer Healthcheck, docker.io fuer Sandbox-Steuerung)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl docker.io && rm -rf /var/lib/apt/lists/*
+
+# Python-Dependencies zuerst (besseres Layer-Caching)
+COPY pyproject.toml .
+RUN pip install --no-cache-dir -e .
+
+# App-Code und initiale Daten kopieren
+COPY src/ src/
+COPY data/ data/
+
+# Non-root User fuer sichere Ausfuehrung
+RUN useradd -m sentinelclaw && \
+    chown -R sentinelclaw:sentinelclaw /app/data
+USER sentinelclaw
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:3001/health || exit 1
+
+CMD ["python", "-m", "uvicorn", "src.api.server:app", "--host", "0.0.0.0", "--port", "3001"]

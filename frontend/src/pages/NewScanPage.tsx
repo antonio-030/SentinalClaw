@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { AlertTriangle, ChevronDown } from 'lucide-react';
+import { AlertTriangle, ChevronDown, X } from 'lucide-react';
 import { useStartScan, useProfiles } from '../hooks/useApi';
 import type { ScanProfile } from '../types/api';
 
@@ -20,12 +20,16 @@ export function NewScanPage() {
   const [customPorts, setCustomPorts] = useState('');
   const [escalation, setEscalation] = useState(2);
   const [authorized, setAuthorized] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const canSubmit = target.trim().length > 0 && authorized && !startScan.isPending;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
+
+    // Vorherigen Fehler zurücksetzen
+    setScanError(null);
 
     startScan.mutate(
       {
@@ -36,6 +40,16 @@ export function NewScanPage() {
       {
         onSuccess: (data) => {
           navigate(`/scans/${data.scan_id}/live`);
+        },
+        onError: (error: Error) => {
+          const message = error.message ?? 'Scan konnte nicht gestartet werden';
+          // 503-Fehler spezifisch als "System nicht bereit" anzeigen
+          if (message.includes('503')) {
+            const detail = message.replace(/^API Error 503:\s*/, '');
+            setScanError(`System nicht bereit: ${detail}`);
+          } else {
+            setScanError(message);
+          }
         },
       },
     );
@@ -185,12 +199,18 @@ export function NewScanPage() {
           </label>
         </div>
 
-        {/* Error */}
-        {startScan.isError && (
-          <div className="rounded-md bg-severity-critical/10 border border-severity-critical/30 px-4 py-3">
-            <p className="text-xs text-severity-critical">
-              {(startScan.error as Error).message ?? 'Scan konnte nicht gestartet werden'}
-            </p>
+        {/* Fehler-Banner */}
+        {scanError && (
+          <div className="rounded-md bg-severity-critical/10 border border-severity-critical/30 px-4 py-3 flex items-start justify-between gap-3">
+            <p className="text-xs text-severity-critical">{scanError}</p>
+            <button
+              type="button"
+              onClick={() => setScanError(null)}
+              className="shrink-0 text-severity-critical/60 hover:text-severity-critical transition-colors"
+              aria-label="Fehlermeldung schliessen"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 

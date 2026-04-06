@@ -63,6 +63,18 @@ async def _get_db():
 async def start_scan(request: Request, body: ScanRequest) -> ScanResponse:
     """Startet einen neuen Scan (analyst+)."""
     caller = require_role(request, "analyst")
+
+    # Infrastruktur-Prüfungen vor Scan-Start
+    from src.shared.infrastructure import check_docker_ready, check_sandbox_running
+
+    docker_ok, docker_msg = await check_docker_ready()
+    if not docker_ok:
+        raise HTTPException(503, docker_msg)
+
+    sandbox_ok, sandbox_msg = await check_sandbox_running()
+    if not sandbox_ok:
+        raise HTTPException(503, sandbox_msg)
+
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
     from src.shared.types.models import AuditLogEntry, ScanJob
 

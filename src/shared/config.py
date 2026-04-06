@@ -185,6 +185,12 @@ class Settings(BaseSettings):
                     "(leer = Standard-Prompt). Fuer iteratives Prompt-Testing.",
     )
 
+    # --- CORS ---
+    cors_origins: str = Field(
+        default="http://localhost:3000,http://localhost:5173",
+        description="Komma-separierte CORS-Origins",
+    )
+
     # --- Sicherheit / Auth ---
     jwt_secret: str = Field(
         default="",

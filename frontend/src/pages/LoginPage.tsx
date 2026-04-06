@@ -38,8 +38,8 @@ export function LoginPage() {
         setMfaRequired(true);
         setMfaSession(res.mfa_session);
       } else {
-        // Kein MFA — direkt einloggen
-        login(res.token, res.user);
+        // Kein MFA — direkt einloggen (Passwortänderungspflicht weiterreichen)
+        login(res.token, res.user, res.must_change_password);
       }
     } catch (err) {
       setError(

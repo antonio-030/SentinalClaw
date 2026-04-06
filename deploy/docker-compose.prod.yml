@@ -1,0 +1,98 @@
+# SentinelClaw — Production Docker-Compose
+# Startet API, Frontend (Nginx), Sandbox und Watchdog
+
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    env_file: .env.prod
+    ports:
+      - "3001:3001"
+    volumes:
+      - ../data:/app/data
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./certs:/etc/ssl/certs:ro
+      - ./private:/etc/ssl/private:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+  sandbox:
+    image: sentinelclaw/sandbox:latest
+    build:
+      context: ../docker/sandbox
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+      - /home/scanner:size=50M
+    security_opt:
+      - no-new-privileges
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+          pids: 256
+    networks:
+      - sentinel-internal
+      - sentinel-scanning
+    restart: unless-stopped
+
+  watchdog:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    command: python -m src.watchdog
+    env_file: .env.prod
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+
+networks:
+  sentinel-internal:
+    driver: bridge
+    internal: true
+  sentinel-scanning:
+    driver: bridge

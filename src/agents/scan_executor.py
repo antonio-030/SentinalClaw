@@ -73,7 +73,7 @@ async def execute_scan_command(
             logger.debug("Scan-Befehl stderr", binary=binary, stderr=err[:200])
 
         if proc.returncode != 0 and not out:
-            raise RuntimeError(f"Scan fehlgeschlagen (Exit {proc.returncode}): {err[:300]}")
+            raise RuntimeError(_parse_docker_error(err, command_parts))
 
         logger.info(
             "Scan-Befehl abgeschlossen",
@@ -86,3 +86,23 @@ async def execute_scan_command(
 
     except TimeoutError:
         raise RuntimeError(f"Scan-Befehl Timeout nach {timeout}s: {' '.join(command_parts[:3])}")
+
+
+def _parse_docker_error(stderr: str, command_parts: list[str]) -> str:
+    """Gibt eine verständliche Fehlermeldung basierend auf dem Docker-stderr zurück."""
+    lower = stderr.lower()
+    cmd_display = " ".join(command_parts[:4])
+
+    if "no such container" in lower:
+        return (
+            f"Sandbox-Container '{SANDBOX_CONTAINER}' nicht gefunden. "
+            "Erstelle ihn mit: docker compose up -d sandbox"
+        )
+
+    if "cannot connect" in lower or "connection refused" in lower:
+        return (
+            "Docker-Daemon nicht erreichbar. "
+            "Stelle sicher dass Docker gestartet ist."
+        )
+
+    return f"Tool-Ausführung fehlgeschlagen: {cmd_display} — {stderr[:300]}"

@@ -12,6 +12,7 @@ Architektur:
 
 import asyncio
 import shlex
+import shutil
 from uuid import uuid4
 
 from src.shared.config import get_settings
@@ -112,6 +113,11 @@ class NemoClawRuntime:
         if KillSwitch().is_active():
             raise RuntimeError("Kill-Switch ist aktiv")
 
+        # Verfügbarkeit der NemoClaw-Infrastruktur prüfen
+        status = self.check_availability()
+        if not status["available"]:
+            raise RuntimeError(f"NemoClaw nicht verfügbar: {status['reason']}")
+
         if not session_id:
             session_id = f"sc-{uuid4().hex[:8]}"
 
@@ -195,6 +201,32 @@ class NemoClawRuntime:
             return {"status": "ready" if ok else "error"}
         except Exception as error:
             return {"status": "unreachable", "error": str(error)}
+
+    @staticmethod
+    def check_availability() -> dict:
+        """Prüft ob die NemoClaw/OpenShell-Infrastruktur verfügbar ist."""
+        result: dict = {"available": False, "reason": "", "details": {}}
+
+        # 1. openshell CLI vorhanden?
+        openshell_path = shutil.which("openshell")
+        result["details"]["openshell_cli"] = openshell_path is not None
+        if not openshell_path:
+            result["reason"] = (
+                "openshell CLI nicht installiert. "
+                "Installiere NemoClaw: pip install nemoclaw"
+            )
+            return result
+
+        # 2. claude CLI vorhanden?
+        claude_path = shutil.which("claude")
+        result["details"]["claude_cli"] = claude_path is not None
+        if not claude_path:
+            result["reason"] = "claude CLI nicht installiert."
+            return result
+
+        result["available"] = True
+        result["reason"] = "Bereit"
+        return result
 
     @property
     def is_openclaw_native(self) -> bool:

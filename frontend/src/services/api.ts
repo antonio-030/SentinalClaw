@@ -8,6 +8,7 @@ import type {
   AgentToolActionResponse,
   AuditEntry,
   AuthorizedTarget,
+  ChangePasswordResponse,
   ChatMessage,
   ChatResponse,
   CompareResult,
@@ -395,6 +396,13 @@ export const api = {
       fetchJson<MfaActionResponse>('/api/v1/auth/mfa/disable', {
         method: 'POST',
         body: JSON.stringify({ token }),
+      }),
+
+    /** POST /api/v1/auth/change-password — Eigenes Passwort ändern */
+    changePassword: (oldPassword: string, newPassword: string) =>
+      fetchJson<ChangePasswordResponse>('/api/v1/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
       }),
   },
 };

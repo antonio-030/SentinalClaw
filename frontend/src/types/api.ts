@@ -176,6 +176,12 @@ export interface LoginResponse {
   user: User;
   mfa_required: boolean;
   mfa_session: string;
+  must_change_password?: boolean;
+}
+
+export interface ChangePasswordResponse {
+  status: string;
+  message: string;
 }
 
 export interface MfaLoginResponse {

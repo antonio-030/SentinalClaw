@@ -1,5 +1,4 @@
-"""
-Authentifizierung und Autorisierung für SentinelClaw.
+"""Authentifizierung und Autorisierung für SentinelClaw.
 
 Stellt JWT-basierte Auth, Passwort-Hashing (bcrypt) und RBAC bereit.
 MFA-Funktionen (TOTP) sind in src/shared/mfa.py ausgelagert.
@@ -37,6 +36,17 @@ if SECRET_KEY == _DEFAULT_DEV_SECRET:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 Stunden
 
+
+def validate_jwt_secret_for_production(debug: bool) -> None:
+    """Prüft ob das JWT-Secret für Produktion sicher genug ist."""
+    if not debug and SECRET_KEY == _DEFAULT_DEV_SECRET:
+        raise RuntimeError(
+            "SENTINEL_JWT_SECRET ist nicht gesetzt oder nutzt den Dev-Default. "
+            "Setze ein sicheres Secret in .env bevor du im Produktionsmodus startest. "
+            "Mindestens 32 Zeichen, z.B.: "
+            'python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+
 # Rollen-Hierarchie: höhere Zahl = mehr Rechte
 ROLES = {
     "system_admin": 100,
@@ -47,7 +57,6 @@ ROLES = {
 }
 
 
-
 def hash_password(password: str) -> str:
     """Erzeugt einen bcrypt-Hash für das Passwort."""
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -56,7 +65,6 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     """Prüft ob das Passwort zum gespeicherten Hash passt."""
     return bcrypt.checkpw(password.encode(), hashed.encode())
-
 
 
 def create_access_token(user_id: str, email: str, role: str) -> str:
@@ -72,14 +80,12 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
 
 
 def create_mfa_session_token(user_id: str, email: str, role: str) -> str:
-    """Delegiert an mfa.py — übergibt das JWT-Secret und den Algorithmus."""
+    """Delegiert an mfa.py — übergibt JWT-Secret und Algorithmus."""
     return _create_mfa_session_raw(user_id, email, role, SECRET_KEY, ALGORITHM)
 
-
 def decode_mfa_session_token(token: str) -> dict | None:
-    """Delegiert an mfa.py — übergibt das JWT-Secret und den Algorithmus."""
+    """Delegiert an mfa.py — übergibt JWT-Secret und Algorithmus."""
     return _decode_mfa_session_raw(token, SECRET_KEY, ALGORITHM)
-
 
 def decode_token(token: str) -> dict | None:
     """Dekodiert und validiert einen JWT-Token. Gibt None bei Fehler zurück."""
@@ -89,11 +95,9 @@ def decode_token(token: str) -> dict | None:
         return None
 
 
-
 def role_has_permission(user_role: str, required_role: str) -> bool:
     """Prüft ob die Benutzer-Rolle ausreichend Rechte hat."""
     return ROLES.get(user_role, 0) >= ROLES.get(required_role, 100)
-
 
 
 class UserRepository:
@@ -108,6 +112,7 @@ class UserRepository:
         display_name: str,
         password: str,
         role: str = "analyst",
+        must_change_password: bool = False,
     ) -> dict:
         """Erstellt einen neuen Benutzer mit gehashtem Passwort."""
         conn = await self._db.get_connection()
@@ -117,10 +122,11 @@ class UserRepository:
 
         await conn.execute(
             """
-            INSERT INTO users (id, email, display_name, password_hash, role, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO users
+                (id, email, display_name, password_hash, role, must_change_password, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, email, display_name, pw_hash, role, now),
+            (user_id, email, display_name, pw_hash, role, must_change_password, now),
         )
         await conn.commit()
         logger.info("Benutzer erstellt", user_id=user_id, email=email, role=role)
@@ -139,7 +145,8 @@ class UserRepository:
         conn = await self._db.get_connection()
         cursor = await conn.execute(
             "SELECT id, email, display_name, password_hash, role, is_active, "
-            "mfa_enabled, mfa_secret, last_login_at, created_at FROM users WHERE email = ?",
+            "mfa_enabled, mfa_secret, must_change_password, last_login_at, "
+            "created_at FROM users WHERE email = ?",
             (email,),
         )
         row = await cursor.fetchone()
@@ -152,7 +159,8 @@ class UserRepository:
         conn = await self._db.get_connection()
         cursor = await conn.execute(
             "SELECT id, email, display_name, password_hash, role, is_active, "
-            "mfa_enabled, mfa_secret, last_login_at, created_at FROM users WHERE id = ?",
+            "mfa_enabled, mfa_secret, must_change_password, last_login_at, "
+            "created_at FROM users WHERE id = ?",
             (user_id,),
         )
         row = await cursor.fetchone()
@@ -165,8 +173,8 @@ class UserRepository:
         conn = await self._db.get_connection()
         cursor = await conn.execute(
             "SELECT id, email, display_name, password_hash, role, is_active, "
-            "mfa_enabled, mfa_secret, last_login_at, created_at "
-            "FROM users ORDER BY created_at DESC"
+            "mfa_enabled, mfa_secret, must_change_password, last_login_at, "
+            "created_at FROM users ORDER BY created_at DESC"
         )
         rows = await cursor.fetchall()
         return [self._row_to_public_dict(row) for row in rows]
@@ -198,9 +206,7 @@ class UserRepository:
         await conn.commit()
         logger.info("Benutzer-Rolle geändert", user_id=user_id, new_role=role)
 
-    async def update_mfa(
-        self, user_id: str, mfa_enabled: bool, mfa_secret: str
-    ) -> None:
+    async def update_mfa(self, user_id: str, mfa_enabled: bool, mfa_secret: str) -> None:
         """Aktualisiert den MFA-Status und das TOTP-Secret eines Benutzers."""
         conn = await self._db.get_connection()
         await conn.execute(
@@ -208,46 +214,56 @@ class UserRepository:
             (mfa_enabled, mfa_secret, user_id),
         )
         await conn.commit()
-        logger.info(
-            "MFA-Status geändert",
-            user_id=user_id,
-            mfa_enabled=mfa_enabled,
+        logger.info("MFA-Status geändert", user_id=user_id, mfa_enabled=mfa_enabled)
+
+    async def update_password(self, user_id: str, new_hash: str) -> None:
+        """Setzt ein neues Passwort-Hash für den Benutzer."""
+        conn = await self._db.get_connection()
+        await conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (new_hash, user_id),
         )
+        await conn.commit()
+        logger.info("Passwort geändert", user_id=user_id)
+
+    async def clear_must_change(self, user_id: str) -> None:
+        """Entfernt die Pflicht zur Passwortänderung."""
+        conn = await self._db.get_connection()
+        await conn.execute(
+            "UPDATE users SET must_change_password = 0 WHERE id = ?",
+            (user_id,),
+        )
+        await conn.commit()
+        logger.info("Passwortänderungspflicht aufgehoben", user_id=user_id)
+
+    # Spalten-Reihenfolge: id(0), email(1), display_name(2), password_hash(3),
+    # role(4), is_active(5), mfa_enabled(6), mfa_secret(7),
+    # must_change_password(8), last_login_at(9), created_at(10)
 
     @staticmethod
     def _row_to_dict(row: tuple) -> dict:
-        """Konvertiert eine Datenbankzeile in ein vollständiges Dict (inkl. Hash + MFA-Secret)."""
+        """Vollständiges Dict (inkl. Hash + MFA-Secret)."""
         return {
-            "id": row[0],
-            "email": row[1],
-            "display_name": row[2],
-            "password_hash": row[3],
-            "role": row[4],
-            "is_active": bool(row[5]),
-            "mfa_enabled": bool(row[6]),
-            "mfa_secret": row[7] or "",
-            "last_login_at": row[8],
-            "created_at": row[9],
+            "id": row[0], "email": row[1], "display_name": row[2],
+            "password_hash": row[3], "role": row[4],
+            "is_active": bool(row[5]), "mfa_enabled": bool(row[6]),
+            "mfa_secret": row[7] or "", "must_change_password": bool(row[8]),
+            "last_login_at": row[9], "created_at": row[10],
         }
 
     @staticmethod
     def _row_to_public_dict(row: tuple) -> dict:
-        """Konvertiert eine Datenbankzeile in ein öffentliches Dict (ohne Hash/Secret)."""
+        """Öffentliches Dict (ohne Hash/Secret)."""
         return {
-            "id": row[0],
-            "email": row[1],
-            "display_name": row[2],
-            "role": row[4],
-            "is_active": bool(row[5]),
+            "id": row[0], "email": row[1], "display_name": row[2],
+            "role": row[4], "is_active": bool(row[5]),
             "mfa_enabled": bool(row[6]),
-            "last_login_at": row[8],
-            "created_at": row[9],
+            "last_login_at": row[9], "created_at": row[10],
         }
 
 
-
 async def ensure_default_admin(db: DatabaseManager) -> None:
-    """Legt einen Standard-Admin an, falls noch keiner existiert."""
+    """Legt einen Standard-Admin an (mit Passwortänderungspflicht)."""
     repo = UserRepository(db)
     admin = await repo.get_by_email("admin@sentinelclaw.local")
     if not admin:
@@ -256,17 +272,13 @@ async def ensure_default_admin(db: DatabaseManager) -> None:
             display_name="Administrator",
             password="admin",
             role="system_admin",
+            must_change_password=True,
         )
         logger.info("Standard-Admin erstellt (admin@sentinelclaw.local)")
 
 
-
 def extract_user_from_request(request: object) -> dict:
-    """Extrahiert den authentifizierten Benutzer aus dem Request-State.
-
-    Wird von allen Route-Modulen genutzt um den aktuellen User zu holen.
-    Wirft 401 wenn kein User im Request vorhanden ist.
-    """
+    """Extrahiert den authentifizierten Benutzer aus dem Request-State."""
     from fastapi import HTTPException
 
     user = getattr(getattr(request, "state", None), "user", None)
@@ -276,12 +288,7 @@ def extract_user_from_request(request: object) -> dict:
 
 
 def require_role(request: object, required_role: str) -> dict:
-    """Prüft ob der aktuelle Benutzer die erforderliche Rolle hat.
-
-    Kombiniert User-Extraktion und Rollen-Prüfung in einem Aufruf.
-    Gibt den User zurück wenn die Berechtigung ausreicht.
-    Wirft 401 (nicht eingeloggt) oder 403 (unzureichende Rolle).
-    """
+    """Prüft ob der aktuelle Benutzer die erforderliche Rolle hat."""
     from fastapi import HTTPException
 
     user = extract_user_from_request(request)

@@ -100,9 +100,16 @@ async def lifespan(app: FastAPI):
     _db = DatabaseManager(settings.db_path)
     await _db.initialize()
 
+    # Schema-Migrationen ausführen (nach initialize, vor Seed-Daten)
+    from src.shared.migrations import run_migrations
+    await run_migrations(_db)
+
     # Standard-Admin anlegen falls noch nicht vorhanden
-    from src.shared.auth import ensure_default_admin
+    from src.shared.auth import ensure_default_admin, validate_jwt_secret_for_production
     await ensure_default_admin(_db)
+
+    # JWT-Secret im Produktionsmodus erzwingen
+    validate_jwt_secret_for_production(settings.debug)
 
     # Hängende Scans aufräumen (>10min running = failed)
     await _cleanup_stuck_scans(_db)
@@ -120,6 +127,10 @@ async def lifespan(app: FastAPI):
     await seed_defaults(_db)
     await seed_builtin_profiles(_db)
     init_settings_service(_db)
+
+    # Produktions-Anforderungen prüfen (vor Sandbox-Start)
+    if not settings.debug:
+        _enforce_production_requirements(settings)
 
     # Sandbox-Container starten falls gestoppt
     await _ensure_sandbox_running()
@@ -278,6 +289,46 @@ async def _ensure_sandbox_running() -> None:
             logger.warning("Sandbox-Container nicht gefunden")
     except Exception as e:
         logger.debug("Sandbox-Auto-Start fehlgeschlagen", error=str(e))
+
+
+# ─── Docker-Verfügbarkeit prüfen ─────────────────────────────────
+
+
+def _is_docker_available() -> bool:
+    """Prüft ob Docker erreichbar ist (für Health-Check)."""
+    try:
+        import docker as docker_lib
+        client = docker_lib.from_env()
+        client.ping()
+        return True
+    except Exception:
+        return False
+
+
+# ─── Produktions-Anforderungen ────────────────────────────────────
+
+
+def _enforce_production_requirements(settings: object) -> None:
+    """Prüft Produktionsanforderungen beim Start. Bricht ab wenn nicht erfüllt."""
+    from src.shared.auth import _DEFAULT_DEV_SECRET, SECRET_KEY
+
+    errors: list[str] = []
+    if SECRET_KEY == _DEFAULT_DEV_SECRET:
+        errors.append(
+            "SENTINEL_JWT_SECRET nicht gesetzt (Dev-Default ist unsicher)"
+        )
+    if not settings.db_path.parent.exists():
+        errors.append(
+            f"DB-Verzeichnis existiert nicht: {settings.db_path.parent}"
+        )
+    if errors:
+        for err in errors:
+            logger.error("Produktions-Anforderung nicht erfüllt", detail=err)
+        raise RuntimeError(
+            f"Server kann nicht im Produktionsmodus starten. "
+            f"{len(errors)} Anforderung(en) nicht erfüllt."
+        )
+    logger.info("Alle Produktions-Anforderungen erfüllt")
 
 
 # ─── Cleanup: Hängende Scans aufräumen ────────────────────────────

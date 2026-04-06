@@ -173,6 +173,8 @@ CREATE TABLE IF NOT EXISTS users (
     role            TEXT NOT NULL DEFAULT 'analyst',
     is_active       BOOLEAN DEFAULT 1,
     mfa_enabled     BOOLEAN DEFAULT 0,
+    mfa_secret      TEXT DEFAULT '',
+    must_change_password BOOLEAN DEFAULT 0,
     last_login_at   TEXT,
     created_at      TEXT NOT NULL
 );

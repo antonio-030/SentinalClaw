@@ -21,6 +21,7 @@ from src.shared.auth import (
     create_access_token,
     create_mfa_session_token,
     extract_user_from_request,
+    hash_password,
     role_has_permission,
     verify_password,
 )
@@ -50,6 +51,12 @@ class RegisterRequest(BaseModel):
 class ChangeRoleRequest(BaseModel):
     """Anfrage zum Ändern der Benutzer-Rolle."""
     role: str
+
+
+class ChangePasswordRequest(BaseModel):
+    """Anfrage zum Ändern des eigenen Passworts."""
+    old_password: str
+    new_password: str
 
 
 # ─── Hilfsfunktionen ─────────────────────────────────────────────
@@ -145,6 +152,7 @@ async def login(request: Request, body: LoginRequest) -> dict:
         },
         "mfa_required": False,
         "mfa_session": "",
+        "must_change_password": user.get("must_change_password", False),
     }
 
 
@@ -168,6 +176,35 @@ async def register(body: RegisterRequest, request: Request) -> dict:
         password=body.password,
     )
     return {"status": "created", "user": user}
+
+
+@router.post("/change-password")
+async def change_password(request: Request, body: ChangePasswordRequest) -> dict:
+    """Ändert das Passwort des aktuell eingeloggten Benutzers.
+
+    Prüft das alte Passwort, validiert das neue (min. 8 Zeichen),
+    setzt das neue Passwort und hebt die Passwortänderungspflicht auf.
+    """
+    caller = _extract_user_from_request(request)
+
+    if len(body.new_password) < 8:
+        raise HTTPException(400, "Neues Passwort muss mindestens 8 Zeichen haben")
+
+    db = await _get_db()
+    repo = UserRepository(db)
+    user = await repo.get_by_id(caller["sub"])
+    if not user:
+        raise HTTPException(404, "Benutzer nicht gefunden")
+
+    if not verify_password(body.old_password, user["password_hash"]):
+        raise HTTPException(401, "Altes Passwort ist falsch")
+
+    new_hash = hash_password(body.new_password)
+    await repo.update_password(user["id"], new_hash)
+    await repo.clear_must_change(user["id"])
+
+    logger.info("Passwort geändert", user_id=user["id"], email=user["email"])
+    return {"status": "changed", "message": "Passwort erfolgreich geändert"}
 
 
 @router.get("/me")
