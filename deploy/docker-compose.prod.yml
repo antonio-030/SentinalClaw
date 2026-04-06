@@ -95,6 +95,9 @@ services:
       - /home/scanner:size=50M
     security_opt:
       - no-new-privileges
+    volumes:
+      # Workspace-Dateien für OpenClaw Agent-Konfiguration
+      - ../workspace:/sandbox/.openclaw/workspace:ro
     deploy:
       resources:
         limits:

@@ -350,6 +350,32 @@ export const api = {
 
   killStatus: () => fetchJson<Record<string, unknown>>('/api/v1/kill/status'),
 
+  // ── Workspace (NemoClaw Agent-Konfiguration) ─────────────────────
+
+  workspace: {
+    /** GET /api/v1/workspace — alle Workspace-Dateien */
+    list: () =>
+      fetchJson<{ name: string; content: string; size: number; modified_at: string }[]>(
+        '/api/v1/workspace',
+      ),
+
+    /** GET /api/v1/workspace/:name — einzelne Datei */
+    get: (name: string) =>
+      fetchJson<{ name: string; content: string; size: number; modified_at: string }>(
+        `/api/v1/workspace/${encodeURIComponent(name)}`,
+      ),
+
+    /** PUT /api/v1/workspace/:name — Datei aktualisieren */
+    update: (name: string, content: string) =>
+      fetchJson<{ name: string; content: string; updated_at: string }>(
+        `/api/v1/workspace/${encodeURIComponent(name)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ content }),
+        },
+      ),
+  },
+
   // ── Whitelist (Autorisierte Ziele) ────────────────────────────────
 
   whitelist: {

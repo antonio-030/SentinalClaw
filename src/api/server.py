@@ -233,6 +233,7 @@ from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E40
 from src.api.scan_routes import router as scan_router  # noqa: E402
 from src.api.settings_routes import router as settings_router  # noqa: E402
 from src.api.whitelist_routes import router as whitelist_router  # noqa: E402
+from src.api.workspace_routes import router as workspace_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(scan_router)
@@ -245,6 +246,7 @@ app.include_router(settings_router)
 app.include_router(approval_router)
 app.include_router(kill_verify_router)
 app.include_router(mfa_router)
+app.include_router(workspace_router)
 
 
 # ─── WebSocket-Endpoint ──────────────────────────────────────────

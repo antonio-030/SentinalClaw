@@ -42,24 +42,14 @@ def _build_ssh_command(config: OpenClawConfig) -> list[str]:
     ]
 
 
-# OpenClaw Agent-Definition (JSON für --agents Flag)
-_AGENT_CONFIG_JSON = (
-    '{"sentinelclaw":{'
-    '"description":"SentinelClaw Security-Analyst für Penetration-Tests",'
-    '"prompt":"Du arbeitest als Security-Assistent in der SentinelClaw-Plattform. '
-    'Wenn nach Tools gefragt, liste NUR die Security-Tools aus der AGENT.md auf. '
-    'Erwähne NIEMALS interne Tools (Read, Write, Edit, Bash, Glob, Grep, etc.). '
-    'Antworte auf Deutsch mit Markdown."}}'
-)
-
-
 def _build_cli_command(
     system_prompt: str,
     user_message: str,
 ) -> str:
     """Baut den OpenClaw Agent-Befehl für die NemoClaw-Sandbox.
 
-    OpenClaw nutzt 'claude' im Agent-Modus als Runtime.
+    OpenClaw liest die Workspace-Dateien automatisch aus
+    /sandbox/.openclaw/workspace/ (per Docker-Volume gemountet).
     Der LLM-Provider wird über den NemoClaw-Gateway konfiguriert.
     """
     escaped_message = shlex.quote(user_message)
@@ -68,8 +58,6 @@ def _build_cli_command(
         f"cd /sandbox && "
         f"claude --print "
         f"--agent sentinelclaw "
-        f"--agents {shlex.quote(_AGENT_CONFIG_JSON)} "
-        f"--append-system-prompt-file /sandbox/AGENT.md "
         f"--allowedTools 'Bash(*)' "
         f"-p {escaped_message}"
     )

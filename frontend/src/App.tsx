@@ -19,6 +19,7 @@ import { ProfilesPage } from './pages/ProfilesPage';
 import { WhitelistPage } from './pages/WhitelistPage';
 import { MonitoringPage } from './pages/MonitoringPage';
 import { AgentToolsPage } from './pages/AgentToolsPage';
+import { WorkspacePage } from './pages/WorkspacePage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { LoginPage } from './pages/LoginPage';
 import { useAuthStore } from './stores/authStore';
@@ -66,6 +67,7 @@ export default function App() {
                   <Route path="/monitoring" element={<MonitoringPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="/agent-tools" element={<AgentToolsPage />} />
+                  <Route path="/workspace" element={<WorkspacePage />} />
                   <Route path="/change-password" element={<ChangePasswordPage />} />
                 </Route>
               </Routes>
