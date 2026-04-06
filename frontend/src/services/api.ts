@@ -4,6 +4,8 @@
 // /health to the backend at localhost:3001.
 
 import type {
+  AgentReport,
+  AgentReportDetail,
   AgentTool,
   AgentToolActionResponse,
   AuditEntry,
@@ -287,6 +289,18 @@ export const api = {
 
     /** DELETE /api/v1/chat/history — Chat + Agent-Sessions löschen */
     clear: () => fetchJson<void>('/api/v1/chat/history', { method: 'DELETE' }),
+  },
+
+  // ── Agent Reports ────────────────────────────────────────────────
+
+  agentReports: {
+    /** GET /api/v1/chat/reports/agent — alle Agent-Reports */
+    list: () =>
+      fetchJson<AgentReport[]>('/api/v1/chat/reports/agent'),
+
+    /** GET /api/v1/chat/reports/agent/:id — einzelner Report mit Inhalt */
+    get: (id: string) =>
+      fetchJson<AgentReportDetail>(`/api/v1/chat/reports/agent/${id}`),
   },
 
   // ── Agent Tools ──────────────────────────────────────────────────

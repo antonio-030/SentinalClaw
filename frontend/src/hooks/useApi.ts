@@ -14,6 +14,7 @@ export const queryKeys = {
   audit: ['audit'] as const,
   health: ['health'] as const,
   agentTools: ['agentTools'] as const,
+  agentReports: ['agentReports'] as const,
   whitelist: ['whitelist'] as const,
   settings: ['settings'] as const,
 };
@@ -178,6 +179,15 @@ export function useUninstallTool() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.agentTools });
     },
+  });
+}
+
+/** Agent-Reports — vom Agent automatisch gespeicherte Reports. */
+export function useAgentReports() {
+  return useQuery({
+    queryKey: queryKeys.agentReports,
+    queryFn: api.agentReports.list,
+    staleTime: 30_000,
   });
 }
 

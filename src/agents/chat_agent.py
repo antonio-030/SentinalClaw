@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.agents.report_persistence import attach_report_notice
 from src.agents.scan_executor import execute_scan_command
 from src.agents.tool_marker_parser import (
     parse_tool_markers,
@@ -151,12 +152,12 @@ async def _run_tool_loop(
     messages: list[dict[str, str]],
     session_id: str,
 ) -> str:
-    """Agent-Loop: Claude aufrufen → Tools ausfuehren → wiederholen bis fertig."""
+    """Agent-Loop: Claude aufrufen → Tools ausführen → wiederholen bis fertig."""
     total_tool_calls = 0
     system_prompt = _load_system_prompt()
 
     for _iteration in range(MAX_TOOL_CALLS_PER_TURN + 1):
-        # Kill-Switch pruefen
+        # Kill-Switch prüfen
         if KillSwitch().is_active():
             return "Agent gestoppt — Kill-Switch ist aktiv."
 
@@ -172,31 +173,34 @@ async def _run_tool_loop(
         # Tool-Marker parsen
         markers = parse_tool_markers(agent_text)
 
-        # Keine Marker → Agent ist fertig
+        # Keine Marker → Agent ist fertig — Report-Persistierung prüfen
         if not markers:
-            return strip_tool_markers(agent_text)
+            response = strip_tool_markers(agent_text)
+            return await attach_report_notice(response)
 
         # Iteration-Limit erreicht
         if total_tool_calls + len(markers) > MAX_TOOL_CALLS_PER_TURN:
             logger.warning("Tool-Limit erreicht", total=total_tool_calls)
-            return strip_tool_markers(agent_text) + (
+            response = strip_tool_markers(agent_text) + (
                 "\n\n*(Tool-Limit erreicht — maximal "
                 f"{MAX_TOOL_CALLS_PER_TURN} Aufrufe pro Anfrage)*"
             )
+            return await attach_report_notice(response)
 
-        # Claude's Antwort (mit Markern) als Assistant-Message anhaengen
+        # Claude's Antwort (mit Markern) als Assistant-Message anhängen
         messages.append({"role": "assistant", "content": agent_text})
 
-        # Tools ausfuehren
+        # Tools ausführen
         tool_results = await _execute_tools(markers, session_id)
         total_tool_calls += len(markers)
 
-        # Ergebnisse als User-Message anhaengen
+        # Ergebnisse als User-Message anhängen
         results_text = _format_tool_results(tool_results)
         messages.append({"role": "user", "content": results_text})
 
-    # Sollte nicht erreicht werden
-    return strip_tool_markers(agent_text)
+    # Sollte nicht erreicht werden — trotzdem Report-Persistierung prüfen
+    response = strip_tool_markers(agent_text)
+    return await attach_report_notice(response)
 
 
 async def _execute_tools(

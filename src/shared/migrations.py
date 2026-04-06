@@ -71,6 +71,19 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
     (6, "Must-Change-Password Feld", [
         "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0",
     ]),
+    (7, "Agent-Reports Tabelle", [
+        """CREATE TABLE IF NOT EXISTS agent_reports (
+            id              TEXT PRIMARY KEY,
+            scan_job_id     TEXT,
+            title           TEXT NOT NULL,
+            report_type     TEXT NOT NULL DEFAULT 'osint',
+            content         TEXT NOT NULL,
+            target          TEXT DEFAULT '',
+            created_by      TEXT DEFAULT 'agent',
+            created_at      TEXT NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_agent_reports_type ON agent_reports(report_type)",
+    ]),
 ]
 
 

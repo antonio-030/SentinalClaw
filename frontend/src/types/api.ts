@@ -218,6 +218,25 @@ export interface ChatResponse {
   scan_id?: string;
 }
 
+// ── Agent Reports ────────────────────────────────────────────────────
+
+export interface AgentReport {
+  id: string;
+  title: string;
+  report_type: string;
+  target: string;
+  created_at: string;
+}
+
+export interface AgentReportDetail {
+  id: string;
+  title: string;
+  report_type: string;
+  content: string;
+  target: string;
+  created_at: string;
+}
+
 // ── Agent Tools ──────────────────────────────────────────────────────
 
 export type ToolCategory = 'reconnaissance' | 'vulnerability' | 'analysis' | 'utility';

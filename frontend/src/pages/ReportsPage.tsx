@@ -4,6 +4,7 @@ import { useScans } from '../hooks/useApi';
 import { api } from '../services/api';
 import { formatDate } from '../utils/format';
 import { MarkdownRenderer } from '../components/chat/MarkdownRenderer';
+import { AgentReportsSection } from '../components/reports/AgentReportsSection';
 import type { Scan } from '../types/api';
 
 type ReportType = 'executive' | 'technical' | 'compliance';
@@ -92,6 +93,12 @@ export function ReportsPage() {
           </div>
         )}
 
+        {/* Überschrift für Scan-Reports (nur wenn es auch Agent-Reports gibt) */}
+        <div className="flex items-center gap-2">
+          <FileText size={18} className="text-accent" strokeWidth={1.5} />
+          <h2 className="text-lg font-semibold text-text-primary">Scan-Reports</h2>
+        </div>
+
         {completedScans.map((scan) => {
           const isOpen = openReport?.scanId === scan.id;
           return (
@@ -179,6 +186,9 @@ export function ReportsPage() {
           );
         })}
       </div>
+
+      {/* Agent-Reports — automatisch gespeicherte Reports vom Chat-Agent */}
+      <AgentReportsSection />
     </div>
   );
 }

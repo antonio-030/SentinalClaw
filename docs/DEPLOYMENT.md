@@ -6,7 +6,33 @@
 
 ---
 
-## 1. Voraussetzungen
+## 1. Schnellstart (Ein-Befehl-Setup)
+
+```bash
+git clone https://github.com/antonio-030/SentinelClaw.git
+cd SentinelClaw/deploy
+bash start.sh
+```
+
+Das Script prüft automatisch:
+- Docker läuft
+- Konfiguration vorhanden
+- SSL-Zertifikate erstellt
+- Alle Services gestartet und healthy
+
+### LLM-Provider konfigurieren
+
+Der LLM-Provider wird im NemoClaw-Gateway eingestellt:
+
+| Provider | Variable | API-Key Format |
+|---|---|---|
+| Claude (Anthropic) | `NEMOCLAW_LLM_PROVIDER=claude` | `NEMOCLAW_LLM_API_KEY=sk-ant-xxx` |
+| Azure OpenAI | `NEMOCLAW_LLM_PROVIDER=azure` | `NEMOCLAW_LLM_API_KEY=xxx` + Azure-Endpoint in NemoClaw |
+| Ollama (lokal) | `NEMOCLAW_LLM_PROVIDER=ollama` | Kein Key nötig (lokaler Server) |
+
+---
+
+## 2. Voraussetzungen
 
 | Anforderung | Minimum |
 |---|---|
@@ -19,7 +45,7 @@
 
 ---
 
-## 2. Schnellstart
+## 3. Manueller Start (Alternative)
 
 ```bash
 # Repository klonen
@@ -27,7 +53,7 @@ git clone https://github.com/antonio-030/SentinelClaw.git
 cd SentinelClaw
 
 # Produktions-Konfiguration erstellen
-cp .env.example deploy/.env.prod
+cp deploy/.env.prod.example deploy/.env.prod
 ```
 
 **`deploy/.env.prod` bearbeiten** — mindestens diese Werte setzen:
@@ -46,7 +72,7 @@ SENTINEL_DEBUG=false
 SENTINEL_LLM_PROVIDER=nemoclaw
 ```
 
-**NemoClaw LLM-Provider konfigurieren** — in `deploy/docker-compose.prod.yml` oder als Environment-Variable:
+**NemoClaw LLM-Provider konfigurieren** — in `deploy/.env.prod`:
 
 ```bash
 # LLM-Provider im NemoClaw-Gateway setzen:
@@ -57,7 +83,7 @@ NEMOCLAW_LLM_API_KEY=sk-ant-xxx    # API-Key für den gewählten Provider
 Der NemoClaw-Gateway routet die LLM-Anfragen über den OpenShell
 Privacy-Router an den konfigurierten Provider.
 
-### SSL-Zertifikat erstellen (Self-Signed fuer Tests)
+### SSL-Zertifikat erstellen (Self-Signed für Tests)
 
 ```bash
 mkdir -p deploy/certs deploy/private
@@ -79,7 +105,7 @@ Die Anwendung ist jetzt erreichbar unter: `https://<server-ip>`
 
 ---
 
-## 3. Erster Login
+## 4. Erster Login
 
 | Feld | Wert |
 |---|---|
@@ -91,9 +117,9 @@ Das System erstellt den Admin-Account automatisch beim ersten Start.
 
 ---
 
-## 4. SSL mit Let's Encrypt
+## 5. SSL mit Let's Encrypt
 
-Fuer Produktionsumgebungen mit eigenem Domainnamen:
+Für Produktionsumgebungen mit eigenem Domainnamen:
 
 ```bash
 # Certbot installieren (Ubuntu)
@@ -118,7 +144,7 @@ docker compose -f docker-compose.prod.yml restart frontend
 
 ---
 
-## 5. Backup
+## 6. Backup
 
 Die SQLite-Datenbank enthält alle Scan-Ergebnisse, Benutzer und Konfigurationen.
 
@@ -144,7 +170,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 ---
 
-## 6. Updates
+## 7. Updates
 
 ```bash
 cd /pfad/zu/SentinelClaw
@@ -158,11 +184,11 @@ docker compose -f docker-compose.prod.yml build
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-**Empfehlung**: Vor jedem Update ein Backup der Datenbank erstellen (siehe Abschnitt 5).
+**Empfehlung**: Vor jedem Update ein Backup der Datenbank erstellen (siehe Abschnitt 6).
 
 ---
 
-## 7. Monitoring
+## 8. Monitoring
 
 ### Health-Endpoint
 
@@ -207,13 +233,13 @@ docker compose -f docker-compose.prod.yml ps
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 ### API startet nicht im Produktionsmodus
 
 **Symptom**: `RuntimeError: Server kann nicht im Produktionsmodus starten`
 
-**Ursache**: Produktions-Anforderungen nicht erfuellt (z.B. JWT-Secret fehlt).
+**Ursache**: Produktions-Anforderungen nicht erfüllt (z.B. JWT-Secret fehlt).
 
 **Lösung**: Logs prüfen und `deploy/.env.prod` korrigieren:
 
@@ -246,7 +272,7 @@ docker compose -f docker-compose.prod.yml logs api
 
 **Symptom**: Browser zeigt SSL-Warnung.
 
-**Lösung**: Neues Zertifikat erstellen (siehe Abschnitt 4) und Frontend neustarten.
+**Lösung**: Neues Zertifikat erstellen (siehe Abschnitt 5) und Frontend neustarten.
 
 ### Datenbank gesperrt (SQLite)
 

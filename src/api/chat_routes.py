@@ -190,6 +190,42 @@ async def get_chat_history(
     ]
 
 
+@router.get("/reports/agent")
+async def list_agent_reports(request: Request) -> list[dict]:
+    """Listet alle Agent-Reports (analyst+)."""
+    require_role(request, "analyst")
+    db = await _get_db()
+    conn = await db.get_connection()
+    cursor = await conn.execute(
+        "SELECT id, title, report_type, target, created_at "
+        "FROM agent_reports ORDER BY created_at DESC LIMIT 50"
+    )
+    return [
+        {"id": r[0], "title": r[1], "report_type": r[2], "target": r[3], "created_at": r[4]}
+        for r in await cursor.fetchall()
+    ]
+
+
+@router.get("/reports/agent/{report_id}")
+async def get_agent_report(report_id: str, request: Request) -> dict:
+    """Gibt einen einzelnen Agent-Report zurück."""
+    require_role(request, "analyst")
+    db = await _get_db()
+    conn = await db.get_connection()
+    cursor = await conn.execute(
+        "SELECT id, title, report_type, content, target, created_at "
+        "FROM agent_reports WHERE id = ?", (report_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Report nicht gefunden")
+    return {
+        "id": row[0], "title": row[1], "report_type": row[2],
+        "content": row[3], "target": row[4], "created_at": row[5],
+    }
+
+
 @router.delete("/history")
 async def clear_chat_history(request: Request) -> dict:
     """Löscht den Chat-Verlauf und die Agent-Sessions (analyst+).
