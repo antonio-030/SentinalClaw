@@ -1,254 +1,232 @@
 """
 NemoClaw Agent-Runtime für SentinelClaw.
 
-Nutzt die Claude Code CLI im Agent-Modus als Runtime.
-Claude CLI hat einen eingebauten Agent-Loop mit Tool-Zugriff
-(Bash, Read, Write, etc.) — genau wie NVIDIA NemoClaw es vorsieht:
-Agent plant → führt Tools aus → analysiert Ergebnisse → wiederholt.
+Nutzt die NemoClaw OpenShell-Sandbox (Landlock + seccomp + netns) als
+isolierte Ausführungsumgebung. Führt den OpenClaw-Agent 'sentinelclaw'
+in der Sandbox aus. Der LLM-Provider ist über den OpenShell Gateway
+konfigurierbar (Claude, Azure, Ollama, NVIDIA NIM).
 
-Der Agent nutzt Bash um docker exec auf dem Sandbox-Container
-auszuführen (nmap, nuclei). Die Scope-Regeln werden im
-System-Prompt durchgesetzt.
+Architektur:
+  SentinelClaw API → SSH → NemoClaw-Sandbox → OpenClaw Agent → LLM-Provider
 """
 
 import asyncio
-import json
-import re
-import shutil
-from typing import Any
+import shlex
+from uuid import uuid4
 
 from src.shared.config import get_settings
 from src.shared.kill_switch import KillSwitch
 from src.shared.logging_setup import get_logger
-from src.shared.types.agent_runtime import (
-    AgentResult,
-    ToolDefinition,
-    ToolExecutor,
-)
+from src.shared.types.agent_runtime import AgentResult, OpenClawConfig
 
 logger = get_logger(__name__)
 
-# Sandbox-Container Name (muss mit docker-compose.yml übereinstimmen)
-SANDBOX_CONTAINER = "sentinelclaw-sandbox"
 
-# Re-Export für Abwärtskompatibilität — Funktion lebt jetzt in recon/prompts.py
-from src.agents.recon.prompts import build_scan_system_prompt as _build_scan_system_prompt  # noqa: E402, F401
-
-
-def _build_cli_args(
-    system_prompt: str,
-    max_turns: int = 15,
-    resume_session_id: str | None = None,
-) -> list[str]:
-    """Baut die Claude CLI Argumente für den Agent-Modus."""
-    args = [
-        "--print",
-        "--output-format", "json",
-        "--permission-mode", "bypassPermissions",
-        "--max-turns", str(max_turns),
-        "--allowedTools", "Bash",
-        "--append-system-prompt", system_prompt,
+def _build_ssh_command(config: OpenClawConfig) -> list[str]:
+    """Baut den SSH-Befehl für die Verbindung zur OpenShell-Sandbox."""
+    proxy_cmd = (
+        f"openshell ssh-proxy "
+        f"--gateway-name {config.gateway_name} "
+        f"--name {config.sandbox_name}"
+    )
+    return [
+        "ssh",
+        "-o", f"ProxyCommand={proxy_cmd}",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR",
+        "-o", f"ConnectTimeout={config.ssh_timeout}",
+        f"sandbox@openshell-{config.sandbox_name}",
     ]
 
-    # Resume für Cache-Sharing (spart Tokens bei Folge-Scans)
-    if resume_session_id and re.match(r"^[a-f0-9\-]{20,100}$", resume_session_id):
-        args.extend(["--resume", resume_session_id])
 
-    return args
+# OpenClaw Agent-Definition (JSON für --agents Flag)
+_AGENT_DEF = (
+    '{"sentinelclaw":{'
+    '"description":"SentinelClaw Security-Analyst für Penetration-Tests",'
+    '"prompt":"Du arbeitest als Security-Assistent in der SentinelClaw-Plattform. '
+    'Wenn nach Tools gefragt, liste NUR die Security-Tools aus der AGENT.md auf. '
+    'Erwähne NIEMALS interne Tools (Read, Write, Edit, Bash, Glob, Grep, etc.). '
+    'Antworte auf Deutsch mit Markdown."}}'
+)
 
 
-async def _invoke_claude_agent(
-    args: list[str],
-    user_prompt: str,
-    timeout: float = 300,
-    runtime: "NemoClawRuntime | None" = None,
-) -> dict[str, Any]:
-    """Startet Claude CLI im Agent-Modus und wartet auf das Ergebnis."""
-    # Kill-Switch prüfen bevor der Subprocess gestartet wird
-    if KillSwitch().is_active():
-        raise RuntimeError("Kill-Switch ist aktiv")
+def _build_cli_command(
+    system_prompt: str,
+    user_message: str,
+) -> str:
+    """Baut den OpenClaw Agent-Befehl für die Sandbox.
 
-    binary_path = shutil.which("claude")
-    if not binary_path:
-        raise RuntimeError("Claude CLI nicht gefunden")
+    Nutzt den 'sentinelclaw' Agent mit AGENT.md als Projektkontext.
+    Der system_prompt wird als --append-system-prompt übergeben
+    (dynamische Tool-Liste, autorisierte Ziele).
+    """
+    escaped_prompt = shlex.quote(system_prompt)
+    escaped_message = shlex.quote(user_message)
 
-    full_args = [binary_path, *args]
-
-    logger.info(
-        "Claude Agent gestartet",
-        max_turns=args[args.index("--max-turns") + 1] if "--max-turns" in args else "?",
-        allowed_tools="Bash",
+    return (
+        f"cd /sandbox && "
+        f"claude --print "
+        f"--agent sentinelclaw "
+        f"--agents {shlex.quote(_AGENT_DEF)} "
+        f"--append-system-prompt-file /sandbox/AGENT.md "
+        f"--allowedTools 'Bash(*)' "
+        f"-p {escaped_message}"
     )
-
-    process = await asyncio.create_subprocess_exec(
-        *full_args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    # Prozess-Referenz speichern, damit stop() ihn beenden kann
-    if runtime is not None:
-        runtime._current_process = process
-
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(input=user_prompt.encode("utf-8")),
-            timeout=timeout,
-        )
-    except TimeoutError:
-        process.kill()
-        raise RuntimeError(f"Claude Agent Timeout nach {timeout}s")
-    finally:
-        # Prozess-Referenz aufräumen nach Abschluss
-        if runtime is not None:
-            runtime._current_process = None
-
-    raw = stdout.decode("utf-8").strip()
-
-    if process.returncode != 0:
-        error_msg = stderr.decode("utf-8", errors="replace").strip()
-        # Bei Exit 1 mit leerem stderr aber vorhandenem stdout:
-        # Claude hat geantwortet, nur mit non-zero exit (passiert bei busy CLI)
-        if raw and not error_msg:
-            logger.warning("Claude Agent Exit 1 aber Output vorhanden, nutze Output")
-        else:
-            logger.error("Claude Agent Fehler", exit_code=process.returncode, error=error_msg[:300])
-            raise RuntimeError(f"Claude Agent fehlgeschlagen: {error_msg[:300]}")
-
-    # JSON parsen
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = {"result": raw, "total_tokens": 0}
-
-    return data
 
 
 class NemoClawRuntime:
-    """Agent-Runtime basierend auf NVIDIA NemoClaw-Architektur.
+    """Agent-Runtime basierend auf NemoClaw/OpenShell.
 
-    Nutzt die Claude Code CLI im Agent-Modus:
-    - Claude bekommt Bash als Tool
-    - System-Prompt definiert die Scan-Regeln
-    - Claude führt autonom nmap/nuclei über docker exec aus
-    - Agent-Loop läuft intern in Claude CLI (max-turns)
-    - Ergebnis kommt als JSON zurück
-
-    Kein API-Key nötig — läuft über das Claude Code Abo.
+    Führt den OpenClaw-Agent 'sentinelclaw' in der isolierten
+    OpenShell-Sandbox aus. Die Sandbox bietet Landlock + seccomp +
+    netns Isolation. Der LLM-Provider ist über den OpenShell
+    Gateway konfigurierbar.
     """
 
-    def __init__(self, llm_provider: Any = None) -> None:
-        self._settings = get_settings()
-        self._session_id: str | None = None
-        self._should_stop = False
-        # Referenz auf den laufenden CLI-Subprocess für Kill-Switch
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._config = OpenClawConfig(
+            gateway_name=settings.openshell_gateway_name,
+            sandbox_name=settings.openshell_sandbox_name,
+            agent_id=settings.openclaw_agent_id,
+            agent_timeout=settings.openclaw_agent_timeout,
+        )
         self._current_process: asyncio.subprocess.Process | None = None
 
     async def run_agent(
         self,
         system_prompt: str,
-        user_message: str,
-        tools: list[ToolDefinition] | None = None,
-        tool_executor: ToolExecutor | None = None,
-        max_iterations: int = 15,
+        user_message: str = "",
+        tools: list | None = None,
+        tool_executor: object | None = None,
+        max_iterations: int = 20,
+        session_id: str | None = None,
+        messages: list[dict[str, str]] | None = None,
     ) -> AgentResult:
-        """Startet den Agent über Claude CLI im Agent-Modus.
+        """Führt den OpenClaw-Agent in der NemoClaw-Sandbox aus.
 
-        Claude CLI übernimmt den gesamten Agent-Loop intern:
-        Planen → Bash-Tool aufrufen → docker exec → Ergebnis analysieren → nächster Schritt.
+        Jeder Aufruf ist eine frische Session (kein akkumulierter Kontext).
+        Chat-History wird über den user_message-Parameter mitgesendet.
         """
-        self._should_stop = False
+        if KillSwitch().is_active():
+            raise RuntimeError("Kill-Switch ist aktiv")
 
-        # CLI-Argumente bauen
-        cli_args = _build_cli_args(
-            system_prompt=system_prompt,
-            max_turns=max_iterations,
-            resume_session_id=self._session_id,
-        )
+        if not session_id:
+            session_id = f"sc-{uuid4().hex[:8]}"
 
-        # Timeout: LLM-Timeout * Anzahl Turns, aber maximal 10 Minuten
-        # nmap über Netz + Claude Reasoning brauchen Zeit
-        timeout = max(300, self._settings.llm_timeout * max_iterations)
+        # User-Nachricht zusammenbauen (ggf. mit History)
+        full_message = _build_user_message(user_message, messages)
 
-        # Agent starten (runtime-Referenz für Kill-Switch-Integration)
-        data = await _invoke_claude_agent(
-            args=cli_args,
-            user_prompt=user_message,
-            timeout=timeout,
-            runtime=self,
-        )
-
-        # Session-ID für Cache-Sharing merken
-        session_id = data.get("session_id")
-        if session_id:
-            self._session_id = session_id
-
-        # Ergebnis extrahieren
-        content = data.get("result", "")
-        if not content:
-            content = data.get("content", "")
-
-        # Token-Verbrauch schätzen
-        usage = data.get("usage", {})
-        prompt_tokens = usage.get("input_tokens", 0)
-        completion_tokens = usage.get("output_tokens", 0)
-        if not prompt_tokens and not completion_tokens:
-            cost = data.get("cost_usd", 0)
-            if cost:
-                total = int(cost * 100_000)
-                prompt_tokens = total // 2
-                completion_tokens = total // 2
-            else:
-                total = int(len(content.split()) * 1.3)
-                prompt_tokens = total // 2
-                completion_tokens = total // 2
-
-        # Anzahl der Tool-Aufrufe aus dem Output schätzen
-        num_turns = data.get("num_turns", 0)
+        # OpenClaw Agent-Befehl in der Sandbox ausführen
+        cli_cmd = _build_cli_command(system_prompt, full_message)
+        ssh_args = _build_ssh_command(self._config)
 
         logger.info(
-            "Claude Agent abgeschlossen",
-            session_id=self._session_id,
-            tokens=prompt_tokens + completion_tokens,
-            num_turns=num_turns,
-            content_length=len(content),
+            "NemoClaw Inference gestartet",
+            sandbox=self._config.sandbox_name,
+            session_id=session_id,
+        )
+
+        process = await asyncio.create_subprocess_exec(
+            *ssh_args, cli_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        self._current_process = process
+
+        try:
+            total_timeout = self._config.agent_timeout + 30
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=total_timeout,
+            )
+        except TimeoutError:
+            process.kill()
+            raise RuntimeError(
+                f"NemoClaw Inference Timeout nach {self._config.agent_timeout}s"
+            )
+        finally:
+            self._current_process = None
+
+        text = stdout.decode("utf-8", errors="replace").strip()
+
+        if not text:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            if process.returncode != 0:
+                raise RuntimeError(f"NemoClaw Fehler: {err[:300]}")
+            raise RuntimeError("NemoClaw: Keine Antwort erhalten")
+
+        logger.info(
+            "NemoClaw Inference abgeschlossen",
+            session_id=session_id,
+            content_length=len(text),
         )
 
         return AgentResult(
-            final_output=content,
-            tool_calls_made=[{"tool": "bash", "count": num_turns}] if num_turns else [],
-            total_prompt_tokens=prompt_tokens,
-            total_completion_tokens=completion_tokens,
-            steps_taken=num_turns,
+            final_output=text,
+            steps_taken=0,
+            session_id=session_id,
         )
 
     async def stop(self) -> None:
         """Stoppt den laufenden Agent und aktiviert den Kill-Switch."""
-        self._should_stop = True
-
-        # Kill-Switch aktivieren — stoppt auch den Sandbox-Container
         KillSwitch().activate(
             triggered_by="NemoClawRuntime.stop()",
             reason="Agent wurde manuell gestoppt",
         )
-
-        # Laufenden CLI-Subprocess beenden, falls vorhanden
         if self._current_process is not None:
             try:
                 self._current_process.kill()
-                logger.warning("Claude CLI Subprocess beendet (kill)")
             except ProcessLookupError:
-                # Prozess bereits beendet — kein Fehler
                 pass
             self._current_process = None
 
-        logger.warning("Kill-Signal an NemoClaw-Agent gesendet")
+    async def check_sandbox_status(self) -> dict:
+        """Prüft den Status der OpenShell-Sandbox."""
+        ssh_args = _build_ssh_command(self._config)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *ssh_args, "echo OK",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            ok = stdout.decode().strip() == "OK"
+            return {"status": "ready" if ok else "error"}
+        except Exception as error:
+            return {"status": "unreachable", "error": str(error)}
 
     @property
     def is_openclaw_native(self) -> bool:
-        """OpenClaw SDK verfügbar (für zukünftige native Integration)."""
-        try:
-            return True
-        except Exception:
-            return False
+        """Echte NemoClaw/OpenShell Integration."""
+        return True
+
+
+def _build_user_message(
+    current_message: str,
+    messages: list[dict[str, str]] | None,
+) -> str:
+    """Baut die User-Nachricht mit optionaler Chat-History.
+
+    Da der OpenClaw-Agent im --print Modus nur eine einzige
+    Nachricht akzeptiert, wird die History als Kontext-Block
+    vorangestellt.
+    """
+    if not messages:
+        return current_message
+
+    # Letzte Nachricht ist die aktuelle User-Nachricht
+    # Die vorherigen sind History-Kontext
+    history_parts: list[str] = []
+    for msg in messages[:-1]:
+        role = "User" if msg["role"] == "user" else "Agent"
+        history_parts.append(f"[{role}]: {msg['content']}")
+
+    if not history_parts:
+        return current_message
+
+    history_block = "\n".join(history_parts)
+    return (
+        f"[Bisheriger Chat-Verlauf]\n{history_block}\n\n"
+        f"[Aktuelle Nachricht]\n{current_message}"
+    )

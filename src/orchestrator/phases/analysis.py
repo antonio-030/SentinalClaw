@@ -12,7 +12,7 @@ Ergebnisse aus Phase 1-3. Erstellt:
 from uuid import UUID
 
 from src.agents.nemoclaw_runtime import NemoClawRuntime
-from src.orchestrator.phases.base import PhaseResult
+from src.orchestrator.phases.base import PhaseResult, execute_phase
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
 from src.shared.phase_repositories import ScanPhaseRepository
@@ -86,77 +86,15 @@ async def run_analysis(
         f"Be concise but thorough. Focus on actionable insights."
     )
 
-    # Phase 4 braucht KEINE Bash-Tools — nur Claude-Reasoning
-    # Dafür nutzen wir --allowedTools ohne Bash (kein Tool-Zugriff)
-    from src.agents.nemoclaw_runtime import _invoke_claude_agent
-
-    cli_args = [
-        "--print",
-        "--output-format", "json",
-        "--append-system-prompt", system_prompt,
-    ]
-
-    # Phase in DB erstellen
-    phase_id = await phase_repo.create(
-        scan_job_id=scan_job_id,
-        phase_number=4,
-        name="Analyse & Bewertung",
-        description="LLM analysiert alle Ergebnisse und erstellt Bewertung",
-    )
-    await phase_repo.update_status(phase_id, "running")
-
-    import time
-    start = time.monotonic()
-
-    result = PhaseResult(
+    # Phase 4: Reine Analyse — OpenClaw-Agent bekommt nur Daten, keine Tools
+    return await execute_phase(
         phase_name="Analyse & Bewertung",
         phase_number=4,
+        system_prompt=system_prompt,
+        user_prompt=f"Analyze the security assessment results for {target} and provide your expert analysis.",
+        scan_job_id=scan_job_id,
+        phase_repo=phase_repo,
+        max_turns=2,
+        timeout=120,
+        runtime=runtime,
     )
-
-    try:
-        data = await _invoke_claude_agent(
-            args=cli_args,
-            user_prompt=f"Analyze the security assessment results for {target} and provide your expert analysis.",
-            timeout=120,
-            runtime=runtime,
-        )
-
-        content = data.get("result", data.get("content", ""))
-        duration = time.monotonic() - start
-
-        result.raw_output = content
-        result.duration_seconds = duration
-        result.status = "completed"
-
-        await phase_repo.update_status(
-            phase_id, "completed",
-            raw_output=content,
-            duration_seconds=duration,
-            parsed_result={
-                "hosts_analyzed": len(hosts_found),
-                "ports_analyzed": len(ports_found),
-                "findings_analyzed": len(findings_found),
-            },
-        )
-
-        logger.info(
-            "Analyse abgeschlossen",
-            duration_s=round(duration, 1),
-            output_length=len(content),
-        )
-
-    except Exception as error:
-        duration = time.monotonic() - start
-        result.status = "failed"
-        result.error = str(error)
-        result.duration_seconds = duration
-
-        await phase_repo.update_status(
-            phase_id, "failed",
-            error_message=str(error)[:500],
-            duration_seconds=duration,
-        )
-
-        logger.error("Analyse fehlgeschlagen", error=str(error))
-
-    return result

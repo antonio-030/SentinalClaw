@@ -33,7 +33,23 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 # --- Sicherheit ---
 # Nur diese Binaries dürfen im Sandbox-Container ausgeführt werden
-ALLOWED_SANDBOX_BINARIES = frozenset({"nmap", "nuclei"})
+ALLOWED_SANDBOX_BINARIES = frozenset({"nmap", "nuclei", "curl", "dig", "whois"})
+
+# --- Agent Tool-Bridge ---
+# Maximale Tool-Aufrufe pro Chat-Turn (verhindert Endlosschleifen)
+MAX_TOOL_CALLS_PER_TURN = 10
+
+# Maximale Zeichenlaenge pro Tool-Ergebnis
+MAX_TOOL_OUTPUT_LENGTH = 15_000
+
+# Standard-Timeouts pro Tool in Sekunden
+TOOL_TIMEOUTS: dict[str, int] = {
+    "nmap": 120,
+    "nuclei": 180,
+    "curl": 30,
+    "dig": 15,
+    "whois": 15,
+}
 
 # Nmap-Flags die erlaubt sind (Allowlist statt Blocklist)
 ALLOWED_NMAP_FLAGS = frozenset({

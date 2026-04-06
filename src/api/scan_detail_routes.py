@@ -43,12 +43,17 @@ async def _get_db():
 
 
 async def _require_scan(scan_id: str):
-    """Laedt einen Scan oder wirft 404 wenn nicht gefunden."""
+    """Laedt einen Scan oder wirft 400/404 wenn ungueltig/nicht gefunden."""
     from src.shared.repositories import ScanJobRepository
+
+    try:
+        scan_uuid = UUID(scan_id)
+    except ValueError:
+        raise HTTPException(400, f"Ungueltige Scan-ID: {scan_id}")
 
     db = await _get_db()
     scan_repo = ScanJobRepository(db)
-    job = await scan_repo.get_by_id(UUID(scan_id))
+    job = await scan_repo.get_by_id(scan_uuid)
     if not job:
         raise HTTPException(404, f"Scan {scan_id} nicht gefunden")
     return db, job
@@ -105,20 +110,26 @@ async def compare_scans(request: CompareRequest) -> dict:
     from src.shared.repositories import ScanJobRepository
     from src.shared.scan_compare import ScanComparator
 
+    try:
+        uuid_a = UUID(request.scan_id_a)
+        uuid_b = UUID(request.scan_id_b)
+    except ValueError as e:
+        raise HTTPException(400, f"Ungueltige Scan-ID: {e}")
+
     db = await _get_db()
     scan_repo = ScanJobRepository(db)
 
     # Beide Scans muessen existieren
-    job_a = await scan_repo.get_by_id(UUID(request.scan_id_a))
+    job_a = await scan_repo.get_by_id(uuid_a)
     if not job_a:
         raise HTTPException(404, f"Scan A {request.scan_id_a} nicht gefunden")
 
-    job_b = await scan_repo.get_by_id(UUID(request.scan_id_b))
+    job_b = await scan_repo.get_by_id(uuid_b)
     if not job_b:
         raise HTTPException(404, f"Scan B {request.scan_id_b} nicht gefunden")
 
     comparator = ScanComparator(db)
-    result = await comparator.compare(UUID(request.scan_id_a), UUID(request.scan_id_b))
+    result = await comparator.compare(uuid_a, uuid_b)
 
     return {
         "scan_id_a": request.scan_id_a,

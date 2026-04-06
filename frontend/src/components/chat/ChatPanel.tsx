@@ -56,10 +56,14 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
     saveMessages(messages);
   }, [messages]);
 
-  // Auto-Scroll bei neuen Nachrichten
+  // Auto-Scroll: bei neuen Nachrichten, beim Öffnen und bei Thinking-Anzeige
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    // Kurzes Delay damit das DOM fertig gerendert ist
+    const timer = setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [messages.length, isOpen, sending]);
 
   // Server-History beim ersten Öffnen laden (einmalig)
   useEffect(() => {
@@ -83,6 +87,27 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
     });
   }, [isOpen]);
 
+  async function pollForAgentResponse(userMessageTime: number): Promise<string | null> {
+    // Pollt die Chat-History bis eine Agent-Antwort NACH der User-Nachricht erscheint
+    const maxPolls = 120; // 10 Minuten bei 5s Intervall
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const history = await api.chat.history();
+        if (history && history.length > 0) {
+          const last = history[history.length - 1];
+          // Neue Agent-Antwort die NACH unserem Send kam
+          if (last.role === 'agent' && new Date(last.created_at).getTime() > userMessageTime) {
+            return last.content;
+          }
+        }
+      } catch {
+        // Netzwerkfehler beim Polling ignorieren, weiter versuchen
+      }
+    }
+    return null;
+  }
+
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
@@ -103,22 +128,45 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
     try {
       const data = await api.chat.send(text);
 
-      const agentMsg: LocalMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'agent',
-        content: data.response,
-        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
-      };
-      setMessages(prev => [...prev, agentMsg]);
-
-      if (data.scan_started && data.scan_id) {
-        const sysMsg: LocalMessage = {
-          id: (Date.now() + 2).toString(),
-          role: 'system',
-          content: `__SCAN_LINK__${data.scan_id}`,
+      // Agent arbeitet im Hintergrund — pollen bis Antwort da ist
+      if (data.response === '__AGENT_THINKING__') {
+        const agentResponse = await pollForAgentResponse(Date.now() - 2000);
+        if (agentResponse) {
+          const agentMsg: LocalMessage = {
+            id: (Date.now() + 1).toString(),
+            role: 'agent',
+            content: agentResponse,
+            timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, agentMsg]);
+        } else {
+          const sysMsg: LocalMessage = {
+            id: (Date.now() + 1).toString(),
+            role: 'system',
+            content: 'Agent hat nicht rechtzeitig geantwortet. Pruefe den Chat-Verlauf spaeter.',
+            timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, sysMsg]);
+        }
+      } else {
+        // Sofortige Antwort (Scan-Befehle, einfache Fragen)
+        const agentMsg: LocalMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'agent',
+          content: data.response,
           timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
         };
-        setMessages(prev => [...prev, sysMsg]);
+        setMessages(prev => [...prev, agentMsg]);
+
+        if (data.scan_started && data.scan_id) {
+          const sysMsg: LocalMessage = {
+            id: (Date.now() + 2).toString(),
+            role: 'system',
+            content: `__SCAN_LINK__${data.scan_id}`,
+            timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, sysMsg]);
+        }
       }
     } catch (err) {
       const errMsg: LocalMessage = {
@@ -136,6 +184,11 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
   function clearHistory() {
     setMessages([]);
     localStorage.removeItem(STORAGE_KEY);
+    // Server-History + Sandbox-Sessions löschen (frische Agent-Session)
+    fetch('/api/v1/chat/history', {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('sc_token')}` },
+    }).catch(() => {});
   }
 
   if (!isOpen) return null;

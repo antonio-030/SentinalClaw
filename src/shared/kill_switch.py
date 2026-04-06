@@ -85,6 +85,9 @@ class KillSwitch:
         # Sandbox-Container sofort stoppen
         self._stop_sandbox_container()
 
+        # OpenShell-Sandbox stoppen (NemoClaw)
+        self._stop_openshell_sandbox()
+
     def _stop_sandbox_container(self) -> None:
         """Stoppt den Sandbox-Container — fängt alle Fehler ab."""
         try:
@@ -108,6 +111,33 @@ class KillSwitch:
                 container_name=_SANDBOX_CONTAINER_NAME,
                 error=str(exc),
             )
+
+    def _stop_openshell_sandbox(self) -> None:
+        """Stoppt die OpenShell-Sandbox (NemoClaw) — faengt alle Fehler ab."""
+        import subprocess
+
+        from src.shared.config import get_settings
+
+        try:
+            settings = get_settings()
+            sandbox_name = settings.openshell_sandbox_name
+            result = subprocess.run(
+                ["openshell", "sandbox", "delete", sandbox_name, "--force"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                logger.info("openshell_sandbox_stopped", sandbox=sandbox_name)
+            else:
+                logger.warning(
+                    "openshell_sandbox_stop_failed",
+                    sandbox=sandbox_name,
+                    stderr=result.stderr[:200],
+                )
+        except FileNotFoundError:
+            # openshell CLI nicht installiert — kein Fehler im PoC
+            logger.debug("openshell_cli_not_found")
+        except Exception as exc:
+            logger.error("openshell_sandbox_stop_error", error=str(exc))
 
     def is_active(self) -> bool:
         """Prüft ob der Kill-Switch aktiviert wurde."""

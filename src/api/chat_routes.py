@@ -1,20 +1,19 @@
 """
 Chat-Routen fuer die SentinelClaw REST-API.
 
-Agent-Chat — nutzt Anthropic API direkt (schnell, kein CLI-Overhead)
-oder Claude CLI als Fallback.
+Agent-Chat — der Agent entscheidet autonom welche Tools er nutzt.
+Keine Regex-Erkennung, keine hardcoded Scan-Befehle.
 """
 
 import asyncio
-import re
-import shutil
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from src.shared.config import get_settings
+from src.agents.chat_agent import ask_agent
+from src.shared.auth import require_role
 from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -27,7 +26,7 @@ router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 
 class ChatRequest(BaseModel):
     message: str = Field(description="Nachricht an den Agent")
-    scan_id: str | None = Field(default=None, description="Optionale Scan-ID fuer Kontext")
+    scan_id: str | None = Field(default=None, description="Optionale Scan-ID")
 
 
 class ChatResponseModel(BaseModel):
@@ -66,163 +65,43 @@ async def _save_message(role: str, content: str, scan_id: str | None = None,
     await conn.commit()
 
 
-# ─── Scan-Befehl-Erkennung ──────────────────────────────────────────
+async def _load_history_for_agent(
+    limit: int = 20,
+) -> list[dict[str, str]]:
+    """Laedt die letzten Chat-Nachrichten als Messages-Liste fuer den Agent.
 
-
-def _detect_scan_command(message: str) -> tuple[bool, str | None]:
-    """Erkennt Scan-Befehle und extrahiert das Ziel."""
-    scan_pattern = re.compile(
-        r"(?:scanne?|teste?|pr[uü]fe|check|scan)\s+(\S+)", re.IGNORECASE
-    )
-    match = scan_pattern.search(message)
-    if match:
-        target = match.group(1).strip(".,;:!?\"'")
-        if "." in target or ":" in target or "/" in target:
-            return True, target
-    return False, None
-
-
-async def _start_scan_from_chat(target: str, scan_id_ref: list[str]) -> None:
-    """Erstellt und startet einen Scan-Job aus dem Chat."""
-    from src.shared.repositories import ScanJobRepository
-    from src.shared.types.models import ScanJob
-
+    Mappt DB-Rollen auf LLM-Rollen: "agent" → "assistant".
+    Filtert System-Nachrichten raus (nur user/assistant relevant).
+    """
     db = await _get_db()
-    scan_repo = ScanJobRepository(db)
-    job = ScanJob(target=target, scan_type="recon", config={"ports": "1-1000", "source": "chat"})
-    await scan_repo.create(job)
-    scan_id_ref.append(str(job.id))
-
-    from src.api.scan_routes import _run_scan_background
-    asyncio.create_task(_run_scan_background(str(job.id), target, "1-1000", 2))
-    logger.info("Scan aus Chat gestartet", scan_id=str(job.id), target=target)
-
-
-# ─── Claude-Aufruf: API zuerst, CLI als Fallback ────────────────────
-
-
-async def _ask_claude(prompt: str) -> str:
-    """Fragt Claude — API wenn Key vorhanden, sonst CLI."""
-    settings = get_settings()
-
-    # 1. Anthropic API (schnell, 5-15s)
-    if settings.has_claude_key():
-        try:
-            return await _ask_claude_api(prompt, settings.claude_api_key, settings.claude_model)
-        except Exception as e:
-            logger.warning("Anthropic API fehlgeschlagen, versuche CLI", error=str(e))
-
-    # 2. Claude CLI Fallback
-    return await _ask_claude_cli(prompt)
-
-
-async def _ask_claude_api(prompt: str, api_key: str, model: str) -> str:
-    """Direkte Anthropic API — schnell, keine Session-Konflikte."""
-    import anthropic
-
-    client = anthropic.AsyncAnthropic(api_key=api_key)
-    response = await client.messages.create(
-        model=model,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-        system="Du bist der SentinelClaw Orchestrator-Agent. Antworte auf Deutsch, nutze Markdown. Sei ein proaktiver Security-Assistent.",
+    conn = await db.get_connection()
+    cursor = await conn.execute(
+        "SELECT role, content FROM chat_messages "
+        "WHERE role IN ('user', 'agent') "
+        "ORDER BY created_at DESC LIMIT ?",
+        (limit,),
     )
+    rows = await cursor.fetchall()
 
-    text_parts = []
-    for block in response.content:
-        if block.type == "text":
-            text_parts.append(block.text)
+    messages: list[dict[str, str]] = []
+    for row in reversed(rows):
+        role = "assistant" if row[0] == "agent" else "user"
+        content = row[1] or ""
+        if content:
+            messages.append({"role": role, "content": content})
 
-    return "\n".join(text_parts) or "Keine Antwort erhalten."
-
-
-async def _ask_claude_cli(prompt: str) -> str:
-    """Claude CLI im Agent-Modus — kann Bash-Tools nutzen für echte Arbeit."""
-    claude_bin = shutil.which("claude")
-    if not claude_bin:
-        return "Claude ist gerade nicht verfügbar."
-
-    try:
-        short_prompt = prompt[:3000]
-
-        # Agent-Modus mit Bash-Tool — Claude kann echte Befehle ausführen
-        proc = await asyncio.create_subprocess_exec(
-            claude_bin, "--print",
-            "--output-format", "json",
-            "--permission-mode", "bypassPermissions",
-            "--max-turns", "15",
-            "--allowedTools", "Bash,Read,Grep,Glob",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=short_prompt.encode("utf-8")), timeout=300
-        )
-
-        raw = stdout.decode("utf-8", errors="replace").strip()
-
-        if raw:
-            # JSON-Output parsen — mehrere mögliche Felder
-            try:
-                import json as _json
-                data = _json.loads(raw)
-
-                # Claude CLI JSON hat "result" als Hauptfeld
-                result = data.get("result", "")
-                if result:
-                    return result
-
-                # Fallback auf andere Felder
-                content = data.get("content", "")
-                if content:
-                    return content
-
-                # Wenn error_max_turns: Teilergebnis trotzdem nutzen
-                if data.get("subtype") == "error_max_turns":
-                    # Die letzte Agent-Antwort ist im result
-                    partial = data.get("result", "")
-                    if partial:
-                        return partial + "\n\n*(Agent hat die maximale Anzahl Schritte erreicht)*"
-                    return "Die Analyse war zu umfangreich. Versuche eine spezifischere Frage."
-
-                # Rohes JSON wenn nichts anderes passt
-                return raw
-            except Exception:
-                # Kein JSON — roher Text
-                return raw
-
-        # Bei leerem Output
-        if proc.returncode != 0:
-            err = stderr.decode("utf-8", errors="replace").strip()
-            logger.warning("Claude Agent Exit-Code", code=proc.returncode, err=err[:200])
-
-        return "Claude konnte nicht antworten. Versuche es erneut."
-
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return (
-            "Die Analyse dauert länger als 5 Minuten. "
-            "Versuche eine spezifischere Frage, z.B.:\n\n"
-            "- **\"Prüfe ob /api/v1/scans SQL-Injection-sicher ist\"**\n"
-            "- **\"Teste den Auth-Endpoint\"**\n"
-        )
-    except Exception as e:
-        logger.error("Claude Agent fehlgeschlagen", error=str(e))
-        return f"Fehler bei der Analyse: {e}"
+    return messages
 
 
 # ─── Chat-Endpoint ──────────────────────────────────────────────────
 
 
 @router.post("", response_model=ChatResponseModel)
-async def send_chat_message(request: ChatRequest) -> ChatResponseModel:
-    """Chat mit dem Orchestrator-Agent."""
-    message = request.message.strip()
-    scan_id = request.scan_id
+async def send_chat_message(request: Request, body: ChatRequest) -> ChatResponseModel:
+    """Chat mit dem Agent (analyst+). Agent entscheidet autonom ueber Tools."""
+    require_role(request, "analyst")
+    message = body.message.strip()
+    scan_id = body.scan_id
 
     if not message:
         return ChatResponseModel(response="Bitte gib eine Nachricht ein.")
@@ -232,56 +111,38 @@ async def send_chat_message(request: ChatRequest) -> ChatResponseModel:
     except Exception:
         pass
 
-    try:
-        return await _process_chat(message, scan_id)
-    except Exception as e:
-        logger.error("Chat fehlgeschlagen", error=str(e))
-        return ChatResponseModel(response=f"Fehler: {e}")
+    # Agent laeuft im Hintergrund — Frontend pollt /chat/history
+    asyncio.create_task(_run_agent_background(message, scan_id))
 
-
-async def _process_chat(message: str, scan_id: str | None) -> ChatResponseModel:
-    """Verarbeitet die Chat-Nachricht."""
-
-    # 1. Scan-Befehl?
-    is_scan, target = _detect_scan_command(message)
-    if is_scan and target:
-        scan_id_ref: list[str] = []
-        await _start_scan_from_chat(target, scan_id_ref)
-        new_scan_id = scan_id_ref[0] if scan_id_ref else None
-
-        response_text = (
-            f"Ich starte einen Scan auf **{target}**.\n\n"
-            f"🔍 Phase 1: Host Discovery\n"
-            f"🔌 Phase 2: Port-Scan\n"
-            f"⚠️ Phase 3: Vulnerability Assessment\n"
-            f"📊 Phase 4: Analyse\n\n"
-            f"Verfolge den Fortschritt in der Live-Ansicht."
-        )
-
-        try:
-            await _save_message("system", f"Scan gestartet: {target}",
-                                scan_id=new_scan_id, message_type="scan_started")
-            await _save_message("agent", response_text, scan_id=new_scan_id)
-        except Exception:
-            pass
-
-        return ChatResponseModel(response=response_text, scan_started=True, scan_id=new_scan_id)
-
-    # 2. Alles andere → Claude als Agent (mit Tools!)
-    prompt = (
-        f"Du bist der SentinelClaw Orchestrator-Agent im Projekt /Users/antonio/Desktop/SentinelClaw.\n"
-        f"API läuft auf Port 3001. Du hast Zugriff auf Bash, Read, Grep, Glob.\n"
-        f"Antworte auf Deutsch. Nutze Markdown. Sei konkret.\n\n"
-        f"Aufgabe: {message}"
+    return ChatResponseModel(
+        response="__AGENT_THINKING__",
+        scan_started=False,
     )
-    response_text = await _ask_claude(prompt)
+
+
+async def _run_agent_background(message: str, scan_id: str | None) -> None:
+    """Fuehrt den Agent im Hintergrund aus und speichert das Ergebnis.
+
+    Laedt die Chat-History aus der DB damit Claude den
+    Konversationskontext behaelt.
+    """
+    try:
+        history = await _load_history_for_agent()
+    except Exception as error:
+        logger.warning("History nicht ladbar, Agent startet ohne Kontext",
+                       error=str(error))
+        history = None
+
+    try:
+        response_text = await ask_agent(message, history=history)
+    except Exception as error:
+        logger.error("Background-Agent fehlgeschlagen", error=str(error))
+        response_text = f"Agent-Fehler: {error}"
 
     try:
         await _save_message("agent", response_text, scan_id=scan_id)
-    except Exception:
-        pass
-
-    return ChatResponseModel(response=response_text, scan_started=False)
+    except Exception as error:
+        logger.error("Agent-Antwort nicht gespeichert", error=str(error))
 
 
 # ─── Chat-History ────────────────────────────────────────────────────
@@ -289,10 +150,12 @@ async def _process_chat(message: str, scan_id: str | None) -> ChatResponseModel:
 
 @router.get("/history", response_model=list[ChatMessageOut])
 async def get_chat_history(
+    request: Request,
     scan_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[ChatMessageOut]:
-    """Gibt den Chat-Verlauf zurück."""
+    """Gibt den Chat-Verlauf zurueck (analyst+)."""
+    require_role(request, "analyst")
     db = await _get_db()
     conn = await db.get_connection()
 
@@ -315,3 +178,29 @@ async def get_chat_history(
         )
         for row in reversed(rows)
     ]
+
+
+@router.delete("/history")
+async def clear_chat_history(request: Request) -> dict:
+    """Löscht den Chat-Verlauf und die Agent-Sessions (analyst+).
+
+    Wird aufgerufen wenn der User im Chat auf 'Leeren' klickt.
+    Löscht auch die OpenClaw-Sessions in der Sandbox damit
+    der Agent frisch startet.
+    """
+    require_role(request, "analyst")
+    db = await _get_db()
+    conn = await db.get_connection()
+    cursor = await conn.execute("DELETE FROM chat_messages")
+    await conn.commit()
+    deleted = cursor.rowcount
+
+    # OpenClaw-Sessions in der Sandbox löschen
+    try:
+        from src.agents.openshell_executor import run_in_sandbox
+        await run_in_sandbox("rm -rf /sandbox/.claude/sessions/*", timeout=5)
+        logger.info("Chat + Sessions geleert", messages=deleted)
+    except Exception as error:
+        logger.warning("Sessions nicht löschbar", error=str(error))
+
+    return {"status": "cleared", "deleted": deleted}

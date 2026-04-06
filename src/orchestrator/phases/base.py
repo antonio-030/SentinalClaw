@@ -1,7 +1,8 @@
 """
-Basis-Klasse für alle Scan-Phasen.
+Basis-Funktion fuer alle Scan-Phasen.
 
-Jede Phase ist ein eigenständiger Agent-Aufruf mit eigener
+Jede Phase ist ein eigenstaendiger Agent-Aufruf ueber die
+NemoClaw-Runtime (OpenClaw in OpenShell-Sandbox) mit eigener
 DB-Persistenz, Fehlerbehandlung und Ergebnis-Parsing.
 """
 
@@ -9,15 +10,9 @@ import time
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from src.agents.nemoclaw_runtime import (
-    NemoClawRuntime,
-    _build_cli_args,
-    _invoke_claude_agent,
-)
+from src.agents.nemoclaw_runtime import NemoClawRuntime
 from src.shared.logging_setup import get_logger
-from src.shared.phase_repositories import (
-    ScanPhaseRepository,
-)
+from src.shared.phase_repositories import ScanPhaseRepository
 
 logger = get_logger(__name__)
 
@@ -28,7 +23,7 @@ class PhaseResult:
 
     phase_name: str
     phase_number: int
-    status: str = "pending"  # pending, running, completed, failed
+    status: str = "pending"  # pending, running, completed, failed, skipped
     raw_output: str = ""
     duration_seconds: float = 0.0
     tokens_used: int = 0
@@ -48,13 +43,14 @@ async def execute_phase(
     max_turns: int = 5,
     timeout: float = 180,
     runtime: NemoClawRuntime | None = None,
+    session_id: str | None = None,
 ) -> PhaseResult:
-    """Führt eine Scan-Phase aus mit DB-Tracking.
+    """Fuehrt eine Scan-Phase aus mit DB-Tracking.
 
     1. Erstellt Phase-Eintrag in DB (status: running)
-    2. Führt Claude-Agent-Aufruf aus
+    2. Ruft OpenClaw-Agent in der NemoClaw-Sandbox auf
     3. Speichert Ergebnis in DB (status: completed/failed)
-    4. Gibt PhaseResult zurück
+    4. Gibt PhaseResult zurueck
     """
     result = PhaseResult(
         phase_name=phase_name,
@@ -82,26 +78,23 @@ async def execute_phase(
     )
 
     try:
-        # Claude-Agent-Aufruf
-        cli_args = _build_cli_args(
+        # OpenClaw Agent in der NemoClaw-Sandbox aufrufen
+        if runtime is None:
+            runtime = NemoClawRuntime()
+
+        agent_result = await runtime.run_agent(
             system_prompt=system_prompt,
-            max_turns=max_turns,
+            user_message=user_prompt,
+            max_iterations=max_turns,
+            session_id=session_id or f"sc-scan-{str(scan_job_id)[:8]}-p{phase_number}",
         )
 
-        data = await _invoke_claude_agent(
-            args=cli_args,
-            user_prompt=user_prompt,
-            timeout=timeout,
-            runtime=runtime,
-        )
-
-        content = data.get("result", data.get("content", ""))
-        num_turns = data.get("num_turns", 0)
+        content = agent_result.final_output
         duration = time.monotonic() - start_time
 
         result.raw_output = content
         result.duration_seconds = duration
-        result.tokens_used = num_turns * 5000
+        result.tokens_used = agent_result.total_prompt_tokens + agent_result.total_completion_tokens
         result.status = "completed"
 
         # Phase in DB aktualisieren

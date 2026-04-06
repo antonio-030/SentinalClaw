@@ -177,6 +177,17 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+-- Autorisierte Scan-Ziele (Whitelist mit Bestätigung)
+CREATE TABLE IF NOT EXISTS authorized_targets (
+    id              TEXT PRIMARY KEY,
+    target          TEXT UNIQUE NOT NULL,
+    confirmed_by    TEXT NOT NULL,
+    confirmation    TEXT NOT NULL DEFAULT 'owner',
+    notes           TEXT DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_targets_target ON authorized_targets(target);
 """
 
 

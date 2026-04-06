@@ -154,6 +154,53 @@ class Settings(BaseSettings):
         description="Max. Prozesse im Sandbox-Container",
     )
 
+    # --- NemoClaw / OpenShell ---
+    openshell_gateway_name: str = Field(
+        default="nemoclaw",
+        description="OpenShell Gateway-Name",
+    )
+    openshell_sandbox_name: str = Field(
+        default="my-assistant",
+        description="OpenShell Sandbox-Name",
+    )
+    openclaw_agent_id: str = Field(
+        default="main",
+        description="OpenClaw Agent-ID innerhalb der Sandbox",
+    )
+    openclaw_agent_timeout: int = Field(
+        default=600,
+        ge=10,
+        le=1800,
+        description="Timeout für OpenClaw Agent-Aufrufe in Sekunden",
+    )
+    openclaw_anthropic_token: str = Field(
+        default="",
+        description="Auth-Token für den OpenClaw-Agent (aus 'claude setup-token')",
+    )
+
+    # --- Chat-Agent ---
+    chat_prompt_file: str = Field(
+        default="",
+        description="Pfad zu einer Datei mit alternativem Chat-System-Prompt "
+                    "(leer = Standard-Prompt). Fuer iteratives Prompt-Testing.",
+    )
+
+    # --- Sicherheit / Auth ---
+    jwt_secret: str = Field(
+        default="",
+        description="JWT-Geheimschluessel (Pflicht in Produktion)",
+    )
+    debug: bool = Field(
+        default=True,
+        description="Debug-Modus — API-Docs nur wenn True",
+    )
+    login_rate_limit_attempts: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description="Max. fehlgeschlagene Logins pro IP in 5 Minuten",
+    )
+
     # --- Datenbank ---
     db_path: Path = Field(
         default=Path("data/sentinelclaw.db"),

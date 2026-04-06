@@ -18,6 +18,8 @@ from src.shared.auth import (
     UserRepository,
     create_access_token,
     decode_token,
+    extract_user_from_request,
+    require_role,
     role_has_permission,
     verify_password,
 )
@@ -65,11 +67,8 @@ async def _get_db():
 
 
 def _extract_user_from_request(request: Request) -> dict:
-    """Extrahiert den authentifizierten Benutzer aus dem Request-State."""
-    user = getattr(request.state, "user", None)
-    if not user:
-        raise HTTPException(401, "Nicht authentifiziert")
-    return user
+    """Wrapper fuer shared Helper — Abwaertskompatibilitaet."""
+    return extract_user_from_request(request)
 
 
 def _require_role(user: dict, required_role: str) -> None:
@@ -85,20 +84,41 @@ def _require_role(user: dict, required_role: str) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest) -> LoginResponse:
-    """Authentifiziert einen Benutzer und gibt einen JWT-Token zurueck."""
+async def login(request: Request, body: LoginRequest) -> LoginResponse:
+    """Authentifiziert einen Benutzer und gibt einen JWT-Token zurueck.
+
+    Rate-Limited: Max. N fehlgeschlagene Versuche pro IP in 5 Minuten.
+    """
+    from src.api.server import get_rate_limiter
+
+    # Client-IP fuer Rate-Limiting extrahieren
+    client_ip = request.client.host if request.client else "unknown"
+    limiter = get_rate_limiter()
+
+    if limiter.is_blocked(client_ip):
+        logger.warning("Login-Rate-Limit erreicht", ip=client_ip)
+        raise HTTPException(
+            429,
+            "Zu viele fehlgeschlagene Login-Versuche. Bitte warte 5 Minuten.",
+        )
+
     db = await _get_db()
     repo = UserRepository(db)
 
-    user = await repo.get_by_email(request.email)
+    user = await repo.get_by_email(body.email)
     if not user:
+        limiter.record_failure(client_ip)
         raise HTTPException(401, "Ungueltige Anmeldedaten")
 
     if not user.get("is_active"):
         raise HTTPException(403, "Benutzerkonto ist deaktiviert")
 
-    if not verify_password(request.password, user["password_hash"]):
+    if not verify_password(body.password, user["password_hash"]):
+        limiter.record_failure(client_ip)
         raise HTTPException(401, "Ungueltige Anmeldedaten")
+
+    # Erfolgreicher Login — Rate-Limit-Zaehler zuruecksetzen
+    limiter.reset(client_ip)
 
     # Letzten Login aktualisieren
     await repo.update_last_login(user["id"])

@@ -30,10 +30,11 @@
 ## Sprache & Kommunikation
 
 - **Code**: Englisch (Variablen, Funktionen, Klassen, Dateinamen)
-- **Kommentare im Code**: Deutsch
+- **Kommentare im Code**: Deutsch mit korrekten Umlauten (ä, ö, ü, ß) — NICHT ae, oe, ue, ss
 - **Dokumentation**: Deutsch (docs/, README, CHANGELOG)
 - **Git-Commits**: Deutsch, imperativ ("Füge Recon-Agent hinzu", nicht "Added recon agent")
 - **PR-Beschreibungen**: Deutsch
+- **Umlaute**: In allen deutschen Texten (Kommentare, Docs, UI-Labels, Logs, Prompts) immer echte Umlaute verwenden: ä ö ü Ä Ö Ü ß — niemals ae oe ue ss als Ersatz
 
 ---
 
@@ -345,6 +346,18 @@ function getFindings(): Finding[] {
 // VERBOTEN — Leere Fehlerbehandlung
 try { await doSomething(); } catch {}
 ```
+
+---
+
+## Architektur-Treue (KRITISCH)
+
+> **Was in den ADRs steht, wird umgesetzt. Keine Abkürzungen über Fallbacks.**
+
+- Wenn eine Architektur-Entscheidung (ADR) existiert, wird diese **exakt umgesetzt**
+- **Fallbacks sind Sicherheitsnetze**, nicht der primäre Entwicklungspfad
+- Wenn der geplante Pfad nicht funktioniert: **fixen**, nicht den Fallback ausbauen
+- Konkret: NemoClaw/OpenClaw ist die Agent-Runtime (ADR-001) — Claude CLI ist nur Fallback
+- Bevor an einem Fallback gearbeitet wird: Prüfen ob die Kernimplementierung existiert und funktioniert
 
 ---
 

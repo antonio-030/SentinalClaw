@@ -9,7 +9,8 @@ Ergebnis wird in DB (discovered_hosts) persistiert.
 import re
 from uuid import UUID
 
-from src.agents.nemoclaw_runtime import SANDBOX_CONTAINER, NemoClawRuntime
+from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.agents.scan_executor import execute_scan_command
 from src.orchestrator.phases.base import PhaseResult, execute_phase
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
@@ -38,18 +39,26 @@ async def run_host_discovery(
 
     targets_str = ", ".join(allowed_targets or [target])
 
+    # Scan-Tool auf dem Host ausfuehren (Docker-Sandbox)
+    try:
+        scan_output = await execute_scan_command(
+            ["nmap", "-sn", target], timeout=60
+        )
+    except RuntimeError:
+        # Host blockiert Ping — mit -Pn nochmal versuchen
+        scan_output = await execute_scan_command(
+            ["nmap", "-Pn", "-sn", target], timeout=60
+        )
+
+    # Scan-Ergebnis an OpenClaw-Agent zur Analyse uebergeben
     system_prompt = (
-        f"You are a host discovery scanner for SentinelClaw.\n"
-        f"SECURITY: ONLY scan these targets: {targets_str}\n\n"
-        f"Run this command:\n"
-        f"docker exec {SANDBOX_CONTAINER} nmap -sn {target}\n\n"
-        f"If the host seems down (blocking ping probes), try with -Pn:\n"
-        f"docker exec {SANDBOX_CONTAINER} nmap -Pn -sn {target}\n\n"
-        f"Then list ALL discovered hosts in this EXACT format, one per line:\n"
+        f"You are a host discovery analyzer for SentinelClaw.\n"
+        f"SECURITY: Only these targets are in scope: {targets_str}\n\n"
+        f"Below is the raw nmap output from a host discovery scan.\n"
+        f"Parse it and list ALL discovered hosts.\n\n"
+        f"=== NMAP OUTPUT ===\n{scan_output}\n=== END ===\n\n"
+        f"List ALL discovered hosts in this EXACT format, one per line:\n"
         f"HOST: <ip_address> <hostname_or_empty>\n\n"
-        f"Example:\n"
-        f"HOST: 10.10.10.5 webserver.local\n"
-        f"HOST: 10.10.10.10\n\n"
         f"If the target is a domain (not CIDR), always report it as a host.\n"
         f"End with: TOTAL: <number> hosts found"
     )
@@ -58,11 +67,11 @@ async def run_host_discovery(
         phase_name="Host Discovery",
         phase_number=1,
         system_prompt=system_prompt,
-        user_prompt=f"Discover all active hosts in {target}",
+        user_prompt=f"Analyze host discovery results for {target}",
         scan_job_id=scan_job_id,
         phase_repo=phase_repo,
-        max_turns=3,
-        timeout=120,
+        max_turns=2,
+        timeout=60,
         runtime=runtime,
     )
 

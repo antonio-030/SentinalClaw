@@ -18,6 +18,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { ProfilesPage } from './pages/ProfilesPage';
 import { WhitelistPage } from './pages/WhitelistPage';
 import { MonitoringPage } from './pages/MonitoringPage';
+import { AgentToolsPage } from './pages/AgentToolsPage';
 import { LoginPage } from './pages/LoginPage';
 import { useAuthStore } from './stores/authStore';
 
@@ -56,6 +57,7 @@ export default function App() {
                 <Route path="/whitelist" element={<WhitelistPage />} />
                 <Route path="/monitoring" element={<MonitoringPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/agent-tools" element={<AgentToolsPage />} />
               </Route>
             </Routes>
           </BrowserRouter>

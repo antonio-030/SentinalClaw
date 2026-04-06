@@ -12,7 +12,8 @@ Zertifikaten und fehlenden Security-Headern.
 import re
 from uuid import UUID
 
-from src.agents.nemoclaw_runtime import SANDBOX_CONTAINER, NemoClawRuntime
+from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.agents.scan_executor import execute_scan_command
 from src.orchestrator.phases.base import PhaseResult, execute_phase
 from src.shared.constants.severity import SEVERITY_CVSS_MAP
 from src.shared.database import DatabaseManager
@@ -55,57 +56,42 @@ def _collect_https_ports(ports_found: list[dict]) -> dict[str, list[int]]:
     return host_ports
 
 
-def _build_system_prompt(
+async def _build_system_prompt(
     target: str,
     host_ports: dict[str, list[int]],
     allowed_targets: list[str],
 ) -> str:
-    """Erstellt den System-Prompt für den SSL/TLS-Analyse-Agent."""
+    """Erstellt den System-Prompt mit Scan-Ergebnissen fuer den SSL/TLS-Agent."""
     targets_str = ", ".join(allowed_targets)
 
-    # Ziel-Info für den Prompt aufbereiten
-    scan_commands: list[str] = []
+    # Scan-Ergebnisse sammeln — Scans laufen auf dem Host (Docker-Sandbox)
+    scan_results: list[str] = []
     for host, ports in host_ports.items():
         port_str = ",".join(str(p) for p in sorted(ports))
-        scan_commands.append(
-            f"docker exec {SANDBOX_CONTAINER} nmap "
-            f"--script ssl-enum-ciphers,ssl-cert "
-            f"-p {port_str} {host}"
-        )
+        try:
+            output = await execute_scan_command(
+                ["nmap", "--script", "ssl-enum-ciphers,ssl-cert", "-p", port_str, host],
+                timeout=120,
+            )
+            scan_results.append(f"=== {host}:{port_str} ===\n{output}")
+        except RuntimeError as error:
+            scan_results.append(f"=== {host}:{port_str} === FEHLER: {error}")
 
-    commands_block = "\n".join(scan_commands)
+    scan_output = "\n\n".join(scan_results)
 
     return (
         f"You are an SSL/TLS analysis agent for SentinelClaw.\n"
-        f"SECURITY: ONLY scan these targets: {targets_str}\n\n"
-        f"Run these commands to check TLS configuration:\n"
-        f"{commands_block}\n\n"
-        f"Analyze the results for:\n"
-        f"1. TLS versions: TLSv1.0 or TLSv1.1 = BAD (should be disabled), "
-        f"TLSv1.2 = OK, TLSv1.3 = GOOD\n"
-        f"2. Certificate validity: expiration date, self-signed, "
-        f"wrong CN/SAN, weak signature algorithm\n"
-        f"3. Weak cipher suites: RC4, DES, 3DES, NULL ciphers, "
-        f"export-grade ciphers, CBC mode with TLS < 1.3\n"
-        f"4. Missing HSTS header: check with "
-        f"docker exec {SANDBOX_CONTAINER} "
-        f"curl -sI https://{target}/ 2>/dev/null | "
-        f"grep -i strict-transport\n\n"
+        f"SECURITY: Only these targets are in scope: {targets_str}\n\n"
+        f"Below is the raw nmap SSL/TLS scan output.\n"
+        f"Analyze it for:\n"
+        f"1. TLS versions: TLSv1.0 or TLSv1.1 = BAD, TLSv1.2 = OK, TLSv1.3 = GOOD\n"
+        f"2. Certificate validity: expiration, self-signed, wrong CN/SAN\n"
+        f"3. Weak cipher suites: RC4, DES, 3DES, NULL, export-grade\n\n"
+        f"=== NMAP SSL OUTPUT ===\n{scan_output}\n=== END ===\n\n"
         f"Report ALL findings in this EXACT format:\n"
         f"FINDING: <severity> | <title> | <host>:<port> | "
         f"<CVE-ID or none> | <CVSS>\n\n"
         f"Severity must be: CRITICAL, HIGH, MEDIUM, LOW, or INFO\n\n"
-        f"Examples:\n"
-        f"FINDING: HIGH | TLSv1.0 Enabled | 10.10.10.5:443 | "
-        f"CVE-2011-3389 | 7.4\n"
-        f"FINDING: MEDIUM | Weak Cipher Suite (3DES) | "
-        f"10.10.10.5:443 | CVE-2016-2183 | 5.3\n"
-        f"FINDING: CRITICAL | Expired SSL Certificate | "
-        f"10.10.10.5:443 | none | 9.1\n"
-        f"FINDING: LOW | Missing HSTS Header | "
-        f"10.10.10.5:443 | none | 3.7\n"
-        f"FINDING: INFO | TLSv1.3 Supported | "
-        f"10.10.10.5:443 | none | 0.0\n\n"
         f"End with a TLS RISK ASSESSMENT section."
     )
 
@@ -147,7 +133,7 @@ async def run_ssl_analysis(
         https_ports=total_ports,
     )
 
-    system_prompt = _build_system_prompt(target, host_ports, all_targets)
+    system_prompt = await _build_system_prompt(target, host_ports, all_targets)
 
     # Benutzer-Prompt mit konkreten Port-Infos
     port_details = ", ".join(

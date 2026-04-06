@@ -9,7 +9,8 @@ Ergebnis: CVEs, CVSS-Scores, Empfehlungen — persistiert als Findings.
 import re
 from uuid import UUID
 
-from src.agents.nemoclaw_runtime import SANDBOX_CONTAINER, NemoClawRuntime
+from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.agents.scan_executor import execute_scan_command
 from src.orchestrator.phases.base import PhaseResult, execute_phase
 from src.shared.constants.severity import SEVERITY_CVSS_MAP
 from src.shared.database import DatabaseManager
@@ -42,7 +43,13 @@ async def run_vuln_scan(
 
     targets_str = ", ".join(allowed_targets or [target])
 
-    # Port-/Service-Infos für den Prompt
+    # Scan-Tool auf dem Host ausfuehren (Docker-Sandbox)
+    scan_output = await execute_scan_command(
+        ["nmap", "--script=default,vuln", "-p", ports, "--script-timeout", "30", target],
+        timeout=180,
+    )
+
+    # Service-Infos fuer den Analyse-Prompt
     services_info = "\n".join(
         f"- {p['host']}:{p['port']}/{p.get('protocol', 'tcp')} "
         f"{p.get('service', '?')} {p.get('version', '')}"
@@ -50,25 +57,19 @@ async def run_vuln_scan(
     ) if ports_found else "Keine offenen Ports aus Phase 2"
 
     system_prompt = (
-        f"You are a vulnerability assessment agent for SentinelClaw.\n"
-        f"SECURITY: ONLY scan these targets: {targets_str}\n\n"
-        f"Services discovered in Phase 2:\n{services_info}\n\n"
-        f"Step 1: Run a quick vulnerability check:\n"
-        f"docker exec {SANDBOX_CONTAINER} nmap --script=default,vuln "
-        f"-p {ports} --script-timeout 30 {target}\n\n"
-        f"Step 2: For each service, analyze the version information:\n"
+        f"You are a vulnerability assessment analyst for SentinelClaw.\n"
+        f"SECURITY: Only these targets are in scope: {targets_str}\n\n"
+        f"Services from Phase 2:\n{services_info}\n\n"
+        f"Below is the raw nmap vulnerability scan output.\n"
+        f"Analyze it and identify all vulnerabilities.\n\n"
+        f"=== NMAP VULN OUTPUT ===\n{scan_output}\n=== END ===\n\n"
+        f"For each service, also analyze the version information:\n"
         f"- Check if the version is outdated/EOL\n"
         f"- Identify known CVEs for the specific version\n"
         f"- Assess the CVSS score (0.0-10.0)\n\n"
         f"Report ALL findings in this EXACT format:\n"
         f"FINDING: <severity> | <title> | <host>:<port> | <CVE-ID or none> | <CVSS>\n\n"
         f"Severity must be: CRITICAL, HIGH, MEDIUM, LOW, or INFO\n\n"
-        f"Example:\n"
-        f"FINDING: CRITICAL | OpenSSH 6.6.1p1 Remote Code Execution | "
-        f"10.10.10.5:22 | CVE-2023-38408 | 9.8\n"
-        f"FINDING: HIGH | Apache 2.4.7 Multiple Vulnerabilities | "
-        f"10.10.10.5:80 | CVE-2021-44790 | 7.5\n"
-        f"FINDING: MEDIUM | TLS 1.0 Enabled | 10.10.10.5:443 | none | 5.3\n\n"
         f"End with a RISK ASSESSMENT section."
     )
 
@@ -76,11 +77,11 @@ async def run_vuln_scan(
         phase_name="Vulnerability Assessment",
         phase_number=3,
         system_prompt=system_prompt,
-        user_prompt=f"Assess vulnerabilities on {target}",
+        user_prompt=f"Analyze vulnerability scan results for {target}",
         scan_job_id=scan_job_id,
         phase_repo=phase_repo,
-        max_turns=5,
-        timeout=240,
+        max_turns=3,
+        timeout=180,
         runtime=runtime,
     )
 
@@ -102,8 +103,10 @@ async def run_vuln_scan(
             parsed_result={"findings": findings},
         )
 
-    # Findings in DB persistieren
+    # Findings in DB persistieren (nur gueltige Dicts verarbeiten)
     for f in findings:
+        if not isinstance(f, dict):
+            continue
         severity_str = f.get("severity", "info").lower()
         severity = {
             "critical": Severity.CRITICAL,

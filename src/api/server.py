@@ -11,6 +11,8 @@ Routen-Aufteilung:
   - finding_routes.py      -> Alle /api/v1/findings/* Endpoints
 """
 
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -19,12 +21,60 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.shared.auth import decode_token
+from src.shared.auth import decode_token, require_role
 from src.shared.config import get_settings
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+
+# ─── Login Rate-Limiter (In-Memory, IP-basiert) ─────────────────
+
+
+class LoginRateLimiter:
+    """Begrenzt fehlgeschlagene Login-Versuche pro IP-Adresse.
+
+    Speichert Zeitstempel fehlgeschlagener Versuche und blockiert
+    weitere Logins wenn das Limit innerhalb des Zeitfensters erreicht ist.
+    """
+
+    WINDOW_SECONDS = 300  # 5 Minuten
+
+    def __init__(self, max_attempts: int = 5) -> None:
+        self._attempts: dict[str, list[float]] = defaultdict(list)
+        self._max_attempts = max_attempts
+
+    def is_blocked(self, ip: str) -> bool:
+        """Prueft ob die IP blockiert ist."""
+        now = time.time()
+        # Alte Eintraege ausserhalb des Zeitfensters entfernen
+        self._attempts[ip] = [
+            t for t in self._attempts[ip]
+            if now - t < self.WINDOW_SECONDS
+        ]
+        return len(self._attempts[ip]) >= self._max_attempts
+
+    def record_failure(self, ip: str) -> None:
+        """Registriert einen fehlgeschlagenen Login-Versuch."""
+        self._attempts[ip].append(time.time())
+
+    def reset(self, ip: str) -> None:
+        """Setzt den Zaehler fuer eine IP zurueck (nach erfolgreichem Login)."""
+        self._attempts.pop(ip, None)
+
+
+# Globale Rate-Limiter-Instanz
+_rate_limiter: LoginRateLimiter | None = None
+
+
+def get_rate_limiter() -> LoginRateLimiter:
+    """Gibt den globalen Rate-Limiter zurueck (Lazy-Init)."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        settings = get_settings()
+        _rate_limiter = LoginRateLimiter(max_attempts=settings.login_rate_limit_attempts)
+    return _rate_limiter
 
 # Globale DB-Instanz (wird im Lifespan initialisiert)
 _db: DatabaseManager | None = None
@@ -74,11 +124,22 @@ async def lifespan(app: FastAPI):
     logger.info("API-Server gestoppt")
 
 
+# API-Dokumentation nur im Debug-Modus exponieren
+_init_settings = get_settings()
+_docs_url = "/docs" if _init_settings.debug else None
+_redoc_url = "/redoc" if _init_settings.debug else None
+
+if not _init_settings.debug:
+    logger.info("Produktion: /docs und /redoc deaktiviert")
+
 app = FastAPI(
     title="SentinelClaw API",
     description="AI-gestuetzte Security Assessment Platform — REST API",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
+    openapi_url="/openapi.json" if _init_settings.debug else None,
 )
 
 # CORS fuer Web-UI (nur eigene Domain im Produkt)
@@ -93,7 +154,10 @@ app.add_middleware(
 # ─── Auth-Middleware ──────────────────────────────────────────────
 
 # Oeffentliche Pfade die keine Authentifizierung erfordern
-_PUBLIC_PATHS = {"/health", "/api/v1/auth/login", "/docs", "/openapi.json", "/redoc"}
+# /docs, /redoc, /openapi.json nur im Debug-Modus (werden sonst gar nicht gemountet)
+_PUBLIC_PATHS: set[str] = {"/health", "/api/v1/auth/login"}
+if _init_settings.debug:
+    _PUBLIC_PATHS |= {"/docs", "/openapi.json", "/redoc"}
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -138,12 +202,16 @@ from src.api.chat_routes import router as chat_router  # noqa: E402
 from src.api.finding_routes import router as finding_router  # noqa: E402
 from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E402
 from src.api.scan_routes import router as scan_router  # noqa: E402
+from src.api.agent_tool_routes import router as agent_tool_router  # noqa: E402
+from src.api.whitelist_routes import router as whitelist_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(scan_router)
 app.include_router(scan_detail_router)
 app.include_router(finding_router)
 app.include_router(chat_router)
+app.include_router(agent_tool_router)
+app.include_router(whitelist_router)
 
 
 # ─── Auto-Start: Sandbox beim Server-Start sicherstellen ─────────
@@ -246,8 +314,9 @@ async def health_check() -> HealthResponse:
 
 
 @app.post("/api/v1/sandbox/start")
-async def start_sandbox() -> dict:
-    """Startet den Sandbox-Container."""
+async def start_sandbox(request: Request) -> dict:
+    """Startet den Sandbox-Container (security_lead+)."""
+    require_role(request, "security_lead")
     try:
         import docker as docker_lib
         client = docker_lib.from_env()
@@ -265,8 +334,9 @@ async def start_sandbox() -> dict:
 
 
 @app.post("/api/v1/sandbox/stop")
-async def stop_sandbox() -> dict:
-    """Stoppt den Sandbox-Container."""
+async def stop_sandbox(request: Request) -> dict:
+    """Stoppt den Sandbox-Container (security_lead+)."""
+    require_role(request, "security_lead")
     try:
         import docker as docker_lib
         client = docker_lib.from_env()
@@ -281,14 +351,15 @@ async def stop_sandbox() -> dict:
 
 
 @app.post("/api/v1/kill")
-async def emergency_kill(request: KillRequest) -> dict:
-    """Aktiviert den Kill-Switch — stoppt ALLE laufenden Scans."""
+async def emergency_kill(request: Request, body: KillRequest) -> dict:
+    """Aktiviert den Kill-Switch — stoppt ALLE laufenden Scans (security_lead+)."""
+    caller = require_role(request, "security_lead")
     from src.shared.kill_switch import KillSwitch
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
     from src.shared.types.models import AuditLogEntry, ScanStatus
 
     ks = KillSwitch()
-    ks.activate(triggered_by="api_user", reason=request.reason)
+    ks.activate(triggered_by=caller.get("email", "api_user"), reason=body.reason)
 
     # Laufende Scans in DB auf KILLED setzen
     db = await get_db()
@@ -302,16 +373,17 @@ async def emergency_kill(request: KillRequest) -> dict:
     await audit_repo.create(AuditLogEntry(
         action="kill.activated",
         resource_type="system",
-        details={"reason": request.reason, "scans_killed": len(running)},
-        triggered_by="api_user",
+        details={"reason": body.reason, "scans_killed": len(running)},
+        triggered_by=caller.get("email", "api_user"),
     ))
 
-    return {"status": "killed", "scans_stopped": len(running), "reason": request.reason}
+    return {"status": "killed", "scans_stopped": len(running), "reason": body.reason}
 
 
 @app.get("/api/v1/audit")
-async def list_audit_logs(limit: int = 50, action: str | None = None) -> list[dict]:
-    """Listet Audit-Log-Eintraege."""
+async def list_audit_logs(request: Request, limit: int = 50, action: str | None = None) -> list[dict]:
+    """Listet Audit-Log-Eintraege (analyst+)."""
+    require_role(request, "analyst")
     from src.shared.repositories import AuditLogRepository
 
     db = await get_db()
@@ -371,11 +443,17 @@ async def system_status() -> dict:
     except Exception as e:
         logger.debug("Docker nicht erreichbar", error=str(e))
 
-    claude_available = shutil.which("claude") is not None
-    openclaw_available = False
+    # NemoClaw/OpenShell Status pruefen
+    nemoclaw_available = False
+    nemoclaw_version = ""
+    openshell_available = shutil.which("openshell") is not None
+
     try:
-        from openclaw import OpenClaw  # noqa: F401
-        openclaw_available = True
+        from src.agents.nemoclaw_runtime import NemoClawRuntime
+        runtime = NemoClawRuntime()
+        status = await runtime.check_sandbox_status()
+        nemoclaw_available = status.get("status") != "unreachable"
+        nemoclaw_version = status.get("version", "")
     except Exception:
         pass
 
@@ -394,8 +472,9 @@ async def system_status() -> dict:
         "system": {
             "version": "0.1.0",
             "llm_provider": settings.llm_provider,
-            "claude_cli": claude_available,
-            "openclaw_sdk": openclaw_available,
+            "nemoclaw_available": nemoclaw_available,
+            "nemoclaw_version": nemoclaw_version,
+            "openshell_available": openshell_available,
             "docker": docker_version,
             "sandbox_running": sandbox_ok,
             "kill_switch_active": kill_active,

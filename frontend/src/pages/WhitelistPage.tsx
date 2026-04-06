@@ -1,127 +1,212 @@
-import { useStatus } from '../hooks/useApi';
-import { ShieldCheck, Info, FileText, Globe, Loader2 } from 'lucide-react';
+// ── Whitelist — Autorisierte Scan-Ziele verwalten ────────────────────
+
+import { useState } from 'react';
+import { ShieldCheck, Plus, Trash2, AlertTriangle, Network } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { useWhitelist, useAuthorizeTarget, useRevokeTarget } from '../hooks/useApi';
+import { showToast } from '../components/shared/NotificationToast';
+import { LoadingSpinner } from '../components/shared/LoadingSpinner';
+import { api } from '../services/api';
 
 export function WhitelistPage() {
-  const { data: status, isLoading, isError, error } = useStatus();
+  const { data: targets, isLoading } = useWhitelist();
+  const { data: policy } = useQuery({
+    queryKey: ['policy'],
+    queryFn: api.whitelist.policy,
+    staleTime: 30_000,
+  });
+  const authorizeMut = useAuthorizeTarget();
+  const revokeMut = useRevokeTarget();
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 size={24} className="animate-spin text-text-tertiary" />
-      </div>
-    );
+  const [target, setTarget] = useState('');
+  const [notes, setNotes] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [confirmation, setConfirmation] = useState('owner');
+
+  async function handleAuthorize(e: React.FormEvent) {
+    e.preventDefault();
+    if (!target.trim() || !confirmed) return;
+
+    try {
+      await authorizeMut.mutateAsync({ target: target.trim(), confirmation, notes });
+      showToast('success', 'Ziel autorisiert', target.trim());
+      setTarget('');
+      setNotes('');
+      setConfirmed(false);
+    } catch (err) {
+      showToast('error', 'Autorisierung fehlgeschlagen',
+        err instanceof Error ? err.message : 'Unbekannter Fehler');
+    }
   }
 
-  if (isError) {
-    return (
-      <div className="max-w-3xl mx-auto">
-        <div className="rounded-lg border border-severity-high/20 bg-severity-high/5 px-5 py-4">
-          <p className="text-sm text-severity-high">
-            Fehler beim Laden der Whitelist: {(error as Error)?.message ?? 'Unbekannter Fehler'}
-          </p>
-        </div>
-      </div>
-    );
+  async function handleRevoke(id: string, name: string) {
+    try {
+      await revokeMut.mutateAsync(id);
+      showToast('success', 'Autorisierung widerrufen', name);
+    } catch (err) {
+      showToast('error', 'Fehler', err instanceof Error ? err.message : 'Unbekannter Fehler');
+    }
   }
-
-  // Extract allowed targets from system status — currently the API returns
-  // system info but not an explicit whitelist field.  We display what we
-  // have and inform the user that config happens externally.
-  const systemInfo = status?.system;
-
-  // Placeholder targets — in the future the backend will expose a
-  // dedicated /api/v1/whitelist endpoint. For now we show an informational
-  // view explaining how the whitelist works.
-  const targets: string[] = [];
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-start gap-3">
-        <ShieldCheck size={22} strokeWidth={1.8} className="text-text-tertiary mt-0.5 shrink-0" />
+      <div>
+        <h1 className="text-xl font-semibold text-text-primary tracking-tight">
+          Scan-Whitelist
+        </h1>
+        <p className="mt-1 text-sm text-text-secondary">
+          Nur autorisierte Ziele dürfen mit aktiven Tools gescannt werden
+        </p>
+      </div>
+
+      {/* Ziel hinzufügen */}
+      <form onSubmit={handleAuthorize}
+        className="rounded-lg border border-border-subtle bg-bg-secondary p-5 space-y-4">
+        <h2 className="text-sm font-semibold text-text-primary">Ziel autorisieren</h2>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-text-secondary mb-1.5">
+              Ziel (Domain, IP oder CIDR)
+            </label>
+            <input
+              type="text"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder="z.B. example.com oder 10.0.0.0/24"
+              className="w-full rounded-md border border-border-default bg-bg-primary px-3 py-2.5 text-sm text-text-primary font-mono placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-text-secondary mb-1.5">Art der Berechtigung</label>
+            <select
+              value={confirmation}
+              onChange={(e) => setConfirmation(e.target.value)}
+              className="w-full appearance-none rounded-md border border-border-default bg-bg-primary px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+            >
+              <option value="owner">Ich bin Eigentümer</option>
+              <option value="pentest_mandate">Schriftlicher Pentest-Auftrag</option>
+              <option value="internal">Internes System</option>
+            </select>
+          </div>
+        </div>
+
         <div>
-          <h1 className="text-xl font-semibold text-text-primary tracking-tight">
-            Scan-Whitelist
-          </h1>
-          <p className="mt-1 text-sm text-text-secondary">
-            Verwaltung der erlaubten Scan-Ziele. Nur Ziele in dieser Liste koennen gescannt werden.
-          </p>
-        </div>
-      </div>
-
-      {/* Info banner */}
-      <div className="flex items-start gap-3 rounded-lg border border-accent/20 bg-accent/5 px-5 py-4">
-        <Info size={16} className="text-accent shrink-0 mt-0.5" />
-        <div className="space-y-1">
-          <p className="text-sm text-text-primary font-medium">
-            Nur Ziele in dieser Liste koennen gescannt werden.
-          </p>
-          <p className="text-xs text-text-secondary leading-relaxed">
-            Die Whitelist stellt sicher, dass ausschliesslich autorisierte Netzwerke und Hosts
-            als Scan-Ziel verwendet werden koennen. Nicht-gelistete Ziele werden vom Scanner abgelehnt.
-          </p>
-        </div>
-      </div>
-
-      {/* Targets list */}
-      <section className="rounded-lg border border-border-subtle bg-bg-secondary">
-        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-border-subtle">
-          <Globe size={16} strokeWidth={1.8} className="text-text-tertiary shrink-0" />
-          <h2 className="text-sm font-semibold text-text-primary tracking-wide">
-            Erlaubte Ziele
-          </h2>
+          <label className="block text-xs text-text-secondary mb-1.5">Notizen (optional)</label>
+          <input
+            type="text"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="z.B. Auftragsnummer, Ansprechpartner..."
+            className="w-full rounded-md border border-border-default bg-bg-primary px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+          />
         </div>
 
-        <div className="px-5 py-4">
-          {targets.length > 0 ? (
-            <ul className="space-y-2">
-              {targets.map((target) => (
-                <li
-                  key={target}
-                  className="flex items-center gap-3 rounded-md border border-border-subtle bg-bg-tertiary/40 px-4 py-3"
-                >
-                  <ShieldCheck size={14} className="text-status-success shrink-0" />
-                  <span className="text-sm text-text-primary font-mono">{target}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="text-center py-6">
-              <ShieldCheck size={28} className="mx-auto text-text-tertiary mb-2" />
-              <p className="text-sm text-text-secondary">
-                Keine Whitelist-Eintraege ueber die API verfuegbar.
-              </p>
-              <p className="text-xs text-text-tertiary mt-1">
-                Konfiguration erfolgt ueber die .env Datei oder API (siehe unten).
-              </p>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Configuration note */}
-      <section className="rounded-lg border border-border-subtle bg-bg-secondary">
-        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-border-subtle">
-          <FileText size={16} strokeWidth={1.8} className="text-text-tertiary shrink-0" />
-          <h2 className="text-sm font-semibold text-text-primary tracking-wide">
-            Konfiguration
-          </h2>
-        </div>
-
-        <div className="px-5 py-4 space-y-3">
-          <p className="text-sm text-text-secondary leading-relaxed">
-            Whitelist wird ueber die <code className="text-xs font-mono bg-bg-tertiary px-1.5 py-0.5 rounded text-text-primary">.env</code> Datei
-            oder API konfiguriert.
-          </p>
-          <div className="rounded-md bg-bg-tertiary border border-border-subtle px-4 py-3">
-            <p className="text-xs font-mono text-text-secondary leading-relaxed">
-              # Beispiel .env Konfiguration<br />
-              ALLOWED_TARGETS=10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
+        {/* Bestätigungs-Checkbox */}
+        <label className="flex items-start gap-3 rounded-md border border-severity-critical/20 bg-severity-critical/5 p-4 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-border-default accent-accent"
+          />
+          <div>
+            <p className="text-sm font-medium text-text-primary">
+              Ich bestätige die Autorisierung
+            </p>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Ich bin berechtigt, dieses Ziel aktiv zu scannen (inkl. SQL-Injection,
+              Port-Scans, Vulnerability-Checks). Unberechtigtes Scannen ist strafbar
+              (§202a, §303b StGB).
             </p>
           </div>
-          <p className="text-xs text-text-tertiary">
-            Systeminformationen: Version {systemInfo?.version ?? '--'} &middot;
-            Docker {systemInfo?.docker ?? '--'}
+        </label>
+
+        <button
+          type="submit"
+          disabled={!target.trim() || !confirmed || authorizeMut.isPending}
+          className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-accent/85 active:scale-95 transition-all disabled:opacity-40"
+        >
+          {authorizeMut.isPending ? <LoadingSpinner size="sm" /> : <Plus size={15} />}
+          Ziel autorisieren
+        </button>
+      </form>
+
+      {/* Autorisierte Ziele */}
+      <section className="rounded-lg border border-border-subtle bg-bg-secondary">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-border-subtle">
+          <ShieldCheck size={16} strokeWidth={1.8} className="text-text-tertiary" />
+          <h2 className="text-sm font-semibold text-text-primary">
+            Autorisierte Ziele ({targets?.length ?? 0})
+          </h2>
+        </div>
+
+        {isLoading ? (
+          <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+        ) : !targets?.length ? (
+          <div className="text-center py-8">
+            <AlertTriangle size={24} className="mx-auto text-text-tertiary mb-2" />
+            <p className="text-sm text-text-secondary">Keine Ziele autorisiert</p>
+            <p className="text-xs text-text-tertiary mt-1">
+              Füge oben ein Ziel hinzu um aktive Scans zu ermöglichen
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border-subtle">
+            {targets.map((t) => (
+              <div key={t.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-bg-tertiary/30 transition-colors">
+                <ShieldCheck size={15} className="text-status-success shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-mono text-text-primary">{t.target}</span>
+                  <span className="ml-2 text-[10px] text-text-tertiary uppercase">
+                    {t.confirmation === 'owner' ? 'Eigentümer' :
+                     t.confirmation === 'pentest_mandate' ? 'Pentest-Auftrag' : 'Intern'}
+                  </span>
+                  {t.notes && <p className="text-xs text-text-tertiary truncate">{t.notes}</p>}
+                </div>
+                <button
+                  onClick={() => handleRevoke(t.id, t.target)}
+                  disabled={revokeMut.isPending}
+                  className="shrink-0 p-1.5 rounded text-text-tertiary hover:text-status-error transition-colors"
+                  aria-label="Autorisierung widerrufen"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Netzwerk-Policy Status */}
+      <section className="rounded-lg border border-border-subtle bg-bg-secondary">
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-border-subtle">
+          <Network size={16} strokeWidth={1.8} className="text-text-tertiary" />
+          <h2 className="text-sm font-semibold text-text-primary">Netzwerk-Policy</h2>
+        </div>
+        <div className="px-5 py-4 space-y-2">
+          <div className="flex items-center justify-between py-1.5">
+            <span className="text-xs text-text-secondary">Status</span>
+            <span className="text-xs font-mono text-text-primary">
+              {policy?.status ?? '—'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between py-1.5">
+            <span className="text-xs text-text-secondary">Version</span>
+            <span className="text-xs font-mono text-text-primary">
+              {policy?.version ?? '—'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between py-1.5">
+            <span className="text-xs text-text-secondary">Hash</span>
+            <span className="text-xs font-mono text-text-tertiary truncate max-w-[200px]">
+              {policy?.hash ?? '—'}
+            </span>
+          </div>
+          <p className="text-[10px] text-text-tertiary pt-2">
+            Die Netzwerk-Policy wird automatisch aktualisiert wenn Ziele
+            autorisiert oder widerrufen werden.
           </p>
         </div>
       </section>

@@ -67,6 +67,18 @@ class AgentResult:
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     steps_taken: int = 0
+    session_id: str | None = None
+
+
+@dataclass(frozen=True)
+class OpenClawConfig:
+    """Konfiguration fuer die OpenClaw-Verbindung via OpenShell."""
+
+    gateway_name: str = "nemoclaw"
+    sandbox_name: str = "my-assistant"
+    agent_id: str = "main"
+    agent_timeout: int = 300
+    ssh_timeout: int = 10
 
 
 @runtime_checkable

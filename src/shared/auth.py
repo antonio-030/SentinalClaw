@@ -6,6 +6,8 @@ und rollenbasierte Zugriffskontrolle (RBAC) bereit.
 Standardmaessig wird beim ersten Start ein Admin-Benutzer angelegt.
 """
 
+import os
+
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
@@ -16,8 +18,16 @@ from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
-# Geheimschluessel fuer JWT — in Produktion aus Umgebungsvariable laden
-SECRET_KEY = "sentinelclaw-jwt-secret-change-in-production"
+# JWT-Secret aus Umgebungsvariable — Fallback NUR fuer lokale Entwicklung
+_DEFAULT_DEV_SECRET = "sentinelclaw-dev-only-NICHT-FUER-PRODUKTION"
+SECRET_KEY = os.environ.get("SENTINEL_JWT_SECRET", _DEFAULT_DEV_SECRET)
+
+if SECRET_KEY == _DEFAULT_DEV_SECRET:
+    logger.warning(
+        "JWT-Secret nicht gesetzt — nutze Dev-Default. "
+        "Setze SENTINEL_JWT_SECRET in .env fuer Produktion!"
+    )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 Stunden
 
@@ -226,3 +236,38 @@ async def ensure_default_admin(db: DatabaseManager) -> None:
             role="system_admin",
         )
         logger.info("Standard-Admin erstellt (admin@sentinelclaw.local)")
+
+
+# ─── Shared RBAC-Helpers fuer alle Route-Module ─────────────────
+
+
+def extract_user_from_request(request: object) -> dict:
+    """Extrahiert den authentifizierten Benutzer aus dem Request-State.
+
+    Wird von allen Route-Modulen genutzt um den aktuellen User zu holen.
+    Wirft 401 wenn kein User im Request vorhanden ist.
+    """
+    from fastapi import HTTPException
+
+    user = getattr(getattr(request, "state", None), "user", None)
+    if not user:
+        raise HTTPException(401, "Nicht authentifiziert")
+    return user
+
+
+def require_role(request: object, required_role: str) -> dict:
+    """Prueft ob der aktuelle Benutzer die erforderliche Rolle hat.
+
+    Kombiniert User-Extraktion und Rollen-Pruefung in einem Aufruf.
+    Gibt den User zurueck wenn die Berechtigung ausreicht.
+    Wirft 401 (nicht eingeloggt) oder 403 (unzureichende Rolle).
+    """
+    from fastapi import HTTPException
+
+    user = extract_user_from_request(request)
+    if not role_has_permission(user.get("role", ""), required_role):
+        raise HTTPException(
+            403,
+            f"Unzureichende Berechtigung — Rolle '{required_role}' oder hoeher erforderlich",
+        )
+    return user

@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Radar, AlertTriangle, ScrollText, FileText, Download, GitCompare, Activity, Settings, X, Layers, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Radar, AlertTriangle, ScrollText, FileText, Download, GitCompare, Activity, Settings, X, Layers, ShieldCheck, Package } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 interface NavItem {
@@ -77,6 +77,7 @@ export function Sidebar({ runningScans = 0, onNavigate }: SidebarProps) {
         {([
           { to: '/profiles', label: 'Profile', icon: Layers },
           { to: '/whitelist', label: 'Whitelist', icon: ShieldCheck },
+          { to: '/agent-tools', label: 'Agent Tools', icon: Package },
         ] as NavItem[]).map((item) => (
           <NavLink
             key={item.to}

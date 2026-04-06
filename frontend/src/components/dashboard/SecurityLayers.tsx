@@ -70,11 +70,11 @@ export function SecurityLayers() {
   const layers: LayerProps[] = [
     {
       name: 'NVIDIA NemoClaw Runtime',
-      description: 'Agent-Orchestrierung und Sandbox-Isolation',
+      description: 'Agent-Orchestrierung und OpenShell-Sandbox',
       icon: <Brain size={16} />,
-      active: !!sys?.openclaw_sdk,
+      active: !!sys?.nemoclaw_available,
       color: 'accent',
-      details: ['OpenClaw SDK', 'Agent Loop', 'Privacy Router'],
+      details: ['OpenClaw Agent', 'Landlock + seccomp', 'OpenShell Sandbox'],
     },
     {
       name: 'Scope-Validator',

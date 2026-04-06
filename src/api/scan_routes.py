@@ -14,9 +14,10 @@ liegen in scan_detail_routes.py.
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from src.shared.auth import require_role
 from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -59,8 +60,9 @@ async def _get_db():
 
 
 @router.post("", response_model=ScanResponse)
-async def start_scan(request: ScanRequest) -> ScanResponse:
-    """Startet einen neuen Scan."""
+async def start_scan(request: Request, body: ScanRequest) -> ScanResponse:
+    """Startet einen neuen Scan (analyst+)."""
+    caller = require_role(request, "analyst")
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
     from src.shared.types.models import AuditLogEntry, ScanJob
 
@@ -69,20 +71,20 @@ async def start_scan(request: ScanRequest) -> ScanResponse:
     audit_repo = AuditLogRepository(db)
 
     # Profil laden wenn angegeben
-    ports = request.ports
-    escalation = request.max_escalation_level
-    if request.profile:
+    ports = body.ports
+    escalation = body.max_escalation_level
+    if body.profile:
         from src.shared.scan_profiles import get_profile
-        profile = get_profile(request.profile)
+        profile = get_profile(body.profile)
         ports = profile.ports
         escalation = profile.max_escalation_level
 
     # Scan-Job erstellen
     job = ScanJob(
-        target=request.target,
-        scan_type=request.scan_type,
+        target=body.target,
+        scan_type=body.scan_type,
         max_escalation_level=escalation,
-        config={"ports": ports, "profile": request.profile},
+        config={"ports": ports, "profile": body.profile},
     )
     await scan_repo.create(job)
 
@@ -91,21 +93,21 @@ async def start_scan(request: ScanRequest) -> ScanResponse:
         action="scan.created",
         resource_type="scan_job",
         resource_id=str(job.id),
-        details={"target": request.target, "ports": ports},
-        triggered_by="api",
+        details={"target": body.target, "ports": ports},
+        triggered_by=caller.get("email", "api"),
     ))
 
     # Scan asynchron starten (Background-Task)
     import asyncio
     asyncio.create_task(
-        _run_scan_background(str(job.id), request.target, ports, escalation)
+        _run_scan_background(str(job.id), body.target, ports, escalation)
     )
 
     return ScanResponse(
         scan_id=str(job.id),
-        target=request.target,
+        target=body.target,
         status="started",
-        message=f"Scan gestartet auf {request.target} (Ports: {ports})",
+        message=f"Scan gestartet auf {body.target} (Ports: {ports})",
     )
 
 
@@ -184,19 +186,24 @@ async def get_scan(scan_id: str) -> dict:
     from src.shared.phase_repositories import OpenPortRepository, ScanPhaseRepository
     from src.shared.repositories import FindingRepository, ScanJobRepository
 
+    try:
+        scan_uuid = UUID(scan_id)
+    except ValueError:
+        raise HTTPException(400, f"Ungueltige Scan-ID: {scan_id}")
+
     db = await _get_db()
     scan_repo = ScanJobRepository(db)
     finding_repo = FindingRepository(db)
     phase_repo = ScanPhaseRepository(db)
     port_repo = OpenPortRepository(db)
 
-    job = await scan_repo.get_by_id(UUID(scan_id))
+    job = await scan_repo.get_by_id(scan_uuid)
     if not job:
         raise HTTPException(404, f"Scan {scan_id} nicht gefunden")
 
-    findings = await finding_repo.list_by_scan(UUID(scan_id))
-    phases = await phase_repo.list_by_scan(UUID(scan_id))
-    ports = await port_repo.list_by_scan(UUID(scan_id))
+    findings = await finding_repo.list_by_scan(scan_uuid)
+    phases = await phase_repo.list_by_scan(scan_uuid)
+    ports = await port_repo.list_by_scan(scan_uuid)
 
     return {
         "scan": {
@@ -225,21 +232,27 @@ async def get_scan(scan_id: str) -> dict:
 
 
 @router.delete("/{scan_id}")
-async def delete_scan(scan_id: str) -> dict:
-    """Loescht einen Scan und alle zugehoerigen Daten (kaskadierend)."""
+async def delete_scan(scan_id: str, request: Request) -> dict:
+    """Loescht einen Scan und alle zugehoerigen Daten (security_lead+)."""
+    caller = require_role(request, "security_lead")
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
     from src.shared.types.models import AuditLogEntry
+
+    try:
+        scan_uuid = UUID(scan_id)
+    except ValueError:
+        raise HTTPException(400, f"Ungueltige Scan-ID: {scan_id}")
 
     db = await _get_db()
     scan_repo = ScanJobRepository(db)
     audit_repo = AuditLogRepository(db)
 
     # Pruefen ob der Scan existiert
-    job = await scan_repo.get_by_id(UUID(scan_id))
+    job = await scan_repo.get_by_id(scan_uuid)
     if not job:
         raise HTTPException(404, f"Scan {scan_id} nicht gefunden")
 
-    await scan_repo.delete(UUID(scan_id))
+    await scan_repo.delete(scan_uuid)
 
     # Audit-Log ueber Loeschung schreiben
     await audit_repo.create(AuditLogEntry(
@@ -247,7 +260,7 @@ async def delete_scan(scan_id: str) -> dict:
         resource_type="scan_job",
         resource_id=scan_id,
         details={"target": job.target},
-        triggered_by="api",
+        triggered_by=caller.get("email", "api"),
     ))
 
     logger.info("Scan geloescht", scan_id=scan_id, target=job.target)
@@ -255,17 +268,23 @@ async def delete_scan(scan_id: str) -> dict:
 
 
 @router.put("/{scan_id}/cancel")
-async def cancel_scan(scan_id: str) -> dict:
-    """Bricht einen laufenden Scan ab."""
+async def cancel_scan(scan_id: str, request: Request) -> dict:
+    """Bricht einen laufenden Scan ab (analyst+)."""
+    caller = require_role(request, "analyst")
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
     from src.shared.types.models import AuditLogEntry, ScanStatus
+
+    try:
+        scan_uuid = UUID(scan_id)
+    except ValueError:
+        raise HTTPException(400, f"Ungueltige Scan-ID: {scan_id}")
 
     db = await _get_db()
     scan_repo = ScanJobRepository(db)
     audit_repo = AuditLogRepository(db)
 
     # Pruefen ob der Scan existiert und laeuft
-    job = await scan_repo.get_by_id(UUID(scan_id))
+    job = await scan_repo.get_by_id(scan_uuid)
     if not job:
         raise HTTPException(404, f"Scan {scan_id} nicht gefunden")
 
@@ -274,7 +293,7 @@ async def cancel_scan(scan_id: str) -> dict:
             409, f"Scan kann nicht abgebrochen werden (Status: {job.status})"
         )
 
-    await scan_repo.update_status(UUID(scan_id), ScanStatus.CANCELLED)
+    await scan_repo.update_status(scan_uuid, ScanStatus.CANCELLED)
 
     # Audit-Log schreiben
     await audit_repo.create(AuditLogEntry(
@@ -282,7 +301,7 @@ async def cancel_scan(scan_id: str) -> dict:
         resource_type="scan_job",
         resource_id=scan_id,
         details={"previous_status": job.status},
-        triggered_by="api",
+        triggered_by=caller.get("email", "api"),
     ))
 
     logger.info("Scan abgebrochen", scan_id=scan_id)

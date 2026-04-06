@@ -13,6 +13,8 @@ export const queryKeys = {
   profiles: ['profiles'] as const,
   audit: ['audit'] as const,
   health: ['health'] as const,
+  agentTools: ['agentTools'] as const,
+  whitelist: ['whitelist'] as const,
 };
 
 // ── Queries ──────────────────────────────────────────────────────────
@@ -121,6 +123,70 @@ export function useDeleteFinding() {
     mutationFn: (id: string) => api.findings.delete(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.findings() });
+    },
+  });
+}
+
+/** Agent tools — verfuegbare Security-Tools in der Sandbox. */
+export function useAgentTools() {
+  return useQuery({
+    queryKey: queryKeys.agentTools,
+    queryFn: api.agentTools.list,
+    staleTime: 30_000,
+  });
+}
+
+/** Tool in der Sandbox installieren. */
+export function useInstallTool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.agentTools.install(name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.agentTools });
+    },
+  });
+}
+
+/** Tool aus der Sandbox deinstallieren. */
+export function useUninstallTool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.agentTools.uninstall(name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.agentTools });
+    },
+  });
+}
+
+/** Autorisierte Scan-Ziele. */
+export function useWhitelist() {
+  return useQuery({
+    queryKey: queryKeys.whitelist,
+    queryFn: api.whitelist.list,
+    staleTime: 30_000,
+  });
+}
+
+/** Ziel autorisieren. */
+export function useAuthorizeTarget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ target, confirmation, notes }: {
+      target: string; confirmation: string; notes?: string;
+    }) => api.whitelist.authorize(target, confirmation, notes),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.whitelist });
+    },
+  });
+}
+
+/** Ziel-Autorisierung widerrufen. */
+export function useRevokeTarget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.whitelist.revoke(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.whitelist });
     },
   });
 }

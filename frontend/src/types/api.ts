@@ -56,8 +56,9 @@ export interface SystemStatus {
   system: {
     version: string;
     llm_provider: string;
-    claude_cli: boolean;
-    openclaw_sdk: boolean;
+    nemoclaw_available: boolean;
+    nemoclaw_version: string;
+    openshell_available: boolean;
     docker: string;
     sandbox_running: boolean;
     kill_switch_active: boolean;
@@ -170,4 +171,36 @@ export interface ChatResponse {
   response: string;
   scan_started: boolean;
   scan_id?: string;
+}
+
+// ── Agent Tools ──────────────────────────────────────────────────────
+
+export type ToolCategory = 'reconnaissance' | 'vulnerability' | 'analysis' | 'utility';
+
+export interface AgentTool {
+  name: string;
+  display_name: string;
+  description: string;
+  category: ToolCategory;
+  installed: boolean;
+  check_output: string;
+  preinstalled: boolean;
+}
+
+export interface AgentToolActionResponse {
+  status: 'installed' | 'already_installed' | 'uninstalled' | 'failed';
+  tool_name: string;
+  output: string;
+  duration_seconds: number;
+}
+
+// ── Whitelist (Autorisierte Ziele) ──────────────────────────────────
+
+export interface AuthorizedTarget {
+  id: string;
+  target: string;
+  confirmed_by: string;
+  confirmation: string;
+  notes: string;
+  created_at: string;
 }

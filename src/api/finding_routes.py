@@ -9,8 +9,9 @@ Enthaelt alle Endpoints unter /api/v1/findings:
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from src.shared.auth import require_role
 from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -62,10 +63,15 @@ async def get_finding(finding_id: str) -> dict:
     """Gibt ein einzelnes Finding anhand seiner ID zurueck."""
     from src.shared.repositories import FindingRepository
 
+    try:
+        finding_uuid = UUID(finding_id)
+    except ValueError:
+        raise HTTPException(400, f"Ungueltige Finding-ID: {finding_id}")
+
     db = await _get_db()
     repo = FindingRepository(db)
 
-    finding = await repo.get_by_id(UUID(finding_id))
+    finding = await repo.get_by_id(finding_uuid)
     if not finding:
         raise HTTPException(404, f"Finding {finding_id} nicht gefunden")
 
@@ -89,21 +95,27 @@ async def get_finding(finding_id: str) -> dict:
 
 
 @router.delete("/{finding_id}")
-async def delete_finding(finding_id: str) -> dict:
-    """Loescht ein einzelnes Finding."""
+async def delete_finding(finding_id: str, request: Request) -> dict:
+    """Loescht ein einzelnes Finding (security_lead+)."""
+    caller = require_role(request, "security_lead")
     from src.shared.repositories import AuditLogRepository, FindingRepository
     from src.shared.types.models import AuditLogEntry
+
+    try:
+        finding_uuid = UUID(finding_id)
+    except ValueError:
+        raise HTTPException(400, f"Ungueltige Finding-ID: {finding_id}")
 
     db = await _get_db()
     repo = FindingRepository(db)
     audit_repo = AuditLogRepository(db)
 
     # Pruefen ob das Finding existiert
-    finding = await repo.get_by_id(UUID(finding_id))
+    finding = await repo.get_by_id(finding_uuid)
     if not finding:
         raise HTTPException(404, f"Finding {finding_id} nicht gefunden")
 
-    await repo.delete(UUID(finding_id))
+    await repo.delete(finding_uuid)
 
     # Audit-Log ueber Loeschung schreiben
     await audit_repo.create(AuditLogEntry(
@@ -111,7 +123,7 @@ async def delete_finding(finding_id: str) -> dict:
         resource_type="finding",
         resource_id=finding_id,
         details={"title": finding.title, "severity": finding.severity},
-        triggered_by="api",
+        triggered_by=caller.get("email", "api"),
     ))
 
     logger.info("Finding geloescht", finding_id=finding_id, title=finding.title)

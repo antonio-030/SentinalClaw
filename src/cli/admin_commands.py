@@ -65,12 +65,12 @@ async def cmd_status() -> None:
     except Exception:
         print("  Docker:          \u274c Nicht erreichbar")
 
-    # OpenClaw prüfen
-    try:
-        from openclaw import OpenClaw  # noqa: F401
-        print("  OpenClaw/NemoClaw: \u2705 SDK verf\u00fcgbar")
-    except Exception:
-        print("  OpenClaw/NemoClaw: \u26a0 SDK nicht importierbar")
+    # NemoClaw/OpenShell pruefen
+    import shutil
+    if shutil.which("openshell"):
+        print("  NemoClaw/OpenShell: \u2705 Installiert")
+    else:
+        print("  NemoClaw/OpenShell: \u26a0 Nicht installiert")
 
     # DB prüfen
     db = DatabaseManager(settings.db_path)

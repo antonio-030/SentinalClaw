@@ -4,7 +4,10 @@
 // /health to the backend at localhost:3001.
 
 import type {
+  AgentTool,
+  AgentToolActionResponse,
   AuditEntry,
+  AuthorizedTarget,
   ChatMessage,
   ChatResponse,
   CompareResult,
@@ -37,8 +40,8 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Timeout: 6 Min für Chat (Agent braucht Zeit), 30s für Rest
-  const timeoutMs = url.includes('/chat') ? 360_000 : 30_000;
+  // Timeout: 12 Min fuer Chat (Agent-Loop mit Tools braucht Zeit), 30s fuer Rest
+  const timeoutMs = url.includes('/chat') ? 720_000 : 30_000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -206,6 +209,49 @@ export const api = {
       fetchJson<ChatMessage[]>(
         `/api/v1/chat/history${scanId ? `?scan_id=${encodeURIComponent(scanId)}` : ''}`,
       ),
+
+    /** DELETE /api/v1/chat/history — Chat + Agent-Sessions löschen */
+    clear: () => fetchJson<void>('/api/v1/chat/history', { method: 'DELETE' }),
+  },
+
+  // ── Agent Tools ──────────────────────────────────────────────────
+
+  agentTools: {
+    /** GET /api/v1/agent/tools — alle Tools mit Status */
+    list: () => fetchJson<AgentTool[]>('/api/v1/agent/tools'),
+
+    /** POST /api/v1/agent/tools/:name/install */
+    install: (name: string) =>
+      fetchJson<AgentToolActionResponse>(`/api/v1/agent/tools/${name}/install`, {
+        method: 'POST',
+      }),
+
+    /** DELETE /api/v1/agent/tools/:name */
+    uninstall: (name: string) =>
+      fetchJson<AgentToolActionResponse>(`/api/v1/agent/tools/${name}`, {
+        method: 'DELETE',
+      }),
+  },
+
+  // ── Whitelist (Autorisierte Ziele) ────────────────────────────────
+
+  whitelist: {
+    /** GET /api/v1/whitelist — alle autorisierten Ziele */
+    list: () => fetchJson<AuthorizedTarget[]>('/api/v1/whitelist'),
+
+    /** POST /api/v1/whitelist — Ziel autorisieren */
+    authorize: (target: string, confirmation: string, notes?: string) =>
+      fetchJson<AuthorizedTarget>('/api/v1/whitelist', {
+        method: 'POST',
+        body: JSON.stringify({ target, confirmation, notes: notes ?? '' }),
+      }),
+
+    /** DELETE /api/v1/whitelist/:id — Autorisierung widerrufen */
+    revoke: (id: string) =>
+      fetchJson<void>(`/api/v1/whitelist/${id}`, { method: 'DELETE' }),
+
+    /** GET /api/v1/whitelist/policy — Policy-Status */
+    policy: () => fetchJson<Record<string, string>>('/api/v1/whitelist/policy'),
   },
 
   // ── Auth ──────────────────────────────────────────────────────────

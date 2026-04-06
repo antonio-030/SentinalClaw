@@ -114,11 +114,11 @@ export function SettingsPage() {
             }
           />
           <SettingRow
-            label="Claude CLI"
+            label="OpenShell"
             value={
               <span className="inline-flex items-center gap-1.5">
-                <Dot ok={!!sys?.claude_cli} />
-                <span>{sys?.claude_cli ? 'Verfuegbar' : 'Nicht gefunden'}</span>
+                <Dot ok={!!sys?.openshell_available} />
+                <span>{sys?.openshell_available ? 'Installiert' : 'Nicht installiert'}</span>
               </span>
             }
           />
@@ -154,11 +154,11 @@ export function SettingsPage() {
             }
           />
           <SettingRow
-            label="OpenClaw SDK"
+            label="NemoClaw Runtime"
             value={
               <span className="inline-flex items-center gap-1.5">
-                <Dot ok={!!sys?.openclaw_sdk} />
-                <span>{sys?.openclaw_sdk ? 'Installiert' : 'Nicht installiert'}</span>
+                <Dot ok={!!sys?.nemoclaw_available} />
+                <span>{sys?.nemoclaw_available ? `Verbunden${sys?.nemoclaw_version ? ` (${sys.nemoclaw_version})` : ''}` : 'Nicht erreichbar'}</span>
               </span>
             }
           />

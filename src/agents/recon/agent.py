@@ -2,7 +2,7 @@
 Recon-Agent — Spezialisierter Agent für Netzwerk-Reconnaissance.
 
 Führt autonom Host Discovery, Port-Scanning und Vulnerability-Scanning
-auf einem Ziel durch. Nutzt die NemoClaw-Runtime (Claude CLI Agent-Modus).
+auf einem Ziel durch. Nutzt die NemoClaw-Runtime (OpenClaw in Sandbox).
 Entspricht FA-02 im Lastenheft.
 """
 
@@ -24,8 +24,8 @@ class ReconAgent:
     """Spezialisierter Reconnaissance-Agent.
 
     Nimmt ein Scan-Ziel entgegen und lässt die NemoClaw-Runtime
-    den Scan autonom durchführen. Claude CLI übernimmt den
-    Agent-Loop: Plant → Bash (docker exec nmap/nuclei) → Analysiert.
+    den Scan autonom durchführen. OpenClaw übernimmt den
+    Agent-Loop: Plant → führt Tools aus → Analysiert.
     """
 
     def __init__(self, runtime: NemoClawRuntime, scope: PentestScope) -> None:

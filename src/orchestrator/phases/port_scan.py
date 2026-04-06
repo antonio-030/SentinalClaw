@@ -9,7 +9,8 @@ Ergebnis wird in DB (open_ports) persistiert.
 import re
 from uuid import UUID
 
-from src.agents.nemoclaw_runtime import SANDBOX_CONTAINER, NemoClawRuntime
+from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.agents.scan_executor import execute_scan_command
 from src.orchestrator.phases.base import PhaseResult, execute_phase
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger
@@ -39,24 +40,27 @@ async def run_port_scan(
     port_repo = OpenPortRepository(db)
 
     targets_str = ", ".join(allowed_targets or [target])
-
-    # Host-Liste für den Prompt aufbereiten
     host_list = ", ".join(h["address"] for h in discovered_hosts) if discovered_hosts else target
+
+    # Scan-Tool auf dem Host ausfuehren (Docker-Sandbox)
+    scan_output = await execute_scan_command(
+        ["nmap", "-sV", "-sC", "-p", ports, host_list], timeout=180
+    )
+
+    # Scan-Ergebnis an OpenClaw-Agent zur Analyse uebergeben
     host_info = "\n".join(
         f"- {h['address']} ({h.get('hostname', '')})" for h in discovered_hosts
     ) if discovered_hosts else f"- {target}"
 
     system_prompt = (
-        f"You are a port scanner for SentinelClaw.\n"
-        f"SECURITY: ONLY scan these targets: {targets_str}\n\n"
-        f"Hosts discovered in Phase 1:\n{host_info}\n\n"
-        f"Run this command:\n"
-        f"docker exec {SANDBOX_CONTAINER} nmap -sV -sC -p {ports} {host_list}\n\n"
+        f"You are a port scan analyzer for SentinelClaw.\n"
+        f"SECURITY: Only these targets are in scope: {targets_str}\n\n"
+        f"Hosts from Phase 1:\n{host_info}\n\n"
+        f"Below is the raw nmap output from a port scan.\n"
+        f"Parse it and list ALL open ports with services.\n\n"
+        f"=== NMAP OUTPUT ===\n{scan_output}\n=== END ===\n\n"
         f"Report ALL open ports in this EXACT format, one per line:\n"
         f"PORT: <host_ip> <port>/<protocol> <state> <service> <version>\n\n"
-        f"Example:\n"
-        f"PORT: 10.10.10.5 22/tcp open ssh OpenSSH 8.9p1\n"
-        f"PORT: 10.10.10.5 80/tcp open http nginx 1.24.0\n\n"
         f"End with: TOTAL: <number> open ports on <number> hosts"
     )
 
@@ -64,11 +68,11 @@ async def run_port_scan(
         phase_name="Port-Scan",
         phase_number=2,
         system_prompt=system_prompt,
-        user_prompt=f"Scan ports {ports} on discovered hosts with service detection",
+        user_prompt=f"Analyze port scan results for {target}",
         scan_job_id=scan_job_id,
         phase_repo=phase_repo,
-        max_turns=4,
-        timeout=180,
+        max_turns=2,
+        timeout=60,
         runtime=runtime,
     )
 

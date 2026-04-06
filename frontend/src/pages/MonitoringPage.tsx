@@ -65,24 +65,24 @@ export function MonitoringPage() {
             <p className="text-xs text-text-secondary">Agent Runtime & Sandbox Orchestrierung</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <StatusDot ok={!!sys?.openclaw_sdk} />
+            <StatusDot ok={!!sys?.nemoclaw_available} />
             <span className="text-xs font-medium text-text-primary">
-              {sys?.openclaw_sdk ? 'SDK Aktiv' : 'SDK Nicht Verfügbar'}
+              {sys?.nemoclaw_available ? 'Verbunden' : 'Nicht erreichbar'}
             </span>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="rounded-md bg-bg-secondary border border-border-subtle p-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">OpenClaw SDK</p>
-            <p className="text-sm font-mono text-text-primary">{sys?.openclaw_sdk ? 'v2026.3.20' : 'Nicht geladen'}</p>
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">OpenClaw Agent</p>
+            <p className="text-sm font-mono text-text-primary">{sys?.nemoclaw_available ? (sys?.nemoclaw_version || 'Aktiv') : 'Nicht verbunden'}</p>
           </div>
           <div className="rounded-md bg-bg-secondary border border-border-subtle p-3">
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">LLM Provider</p>
             <p className="text-sm font-mono text-text-primary">{sys?.llm_provider ?? '--'}</p>
           </div>
           <div className="rounded-md bg-bg-secondary border border-border-subtle p-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">Claude CLI</p>
-            <p className="text-sm font-mono text-text-primary">{sys?.claude_cli ? 'Verfügbar' : 'Nicht gefunden'}</p>
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">OpenShell</p>
+            <p className="text-sm font-mono text-text-primary">{sys?.openshell_available ? 'Landlock + seccomp' : 'Nicht installiert'}</p>
           </div>
         </div>
       </div>
