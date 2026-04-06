@@ -32,6 +32,7 @@ def _build_ssh_command(config: OpenClawConfig) -> list[str]:
     )
     return [
         "ssh",
+        "-tt",  # Force TTY — verhindert Output-Buffering
         "-o", f"ProxyCommand={proxy_cmd}",
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",

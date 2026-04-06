@@ -116,7 +116,7 @@ export function useChatMessages(isOpen: boolean) {
   // Polling als Fallback wenn WebSocket keine Antwort liefert
   async function pollForAgentResponse(userMessageTime: number): Promise<string | null> {
     wsResponseRef.current = null;
-    const maxPolls = 120;
+    const maxPolls = 240; // 20 Minuten bei 5s Intervall
     for (let i = 0; i < maxPolls; i++) {
       if (wsResponseRef.current) {
         const response = wsResponseRef.current;

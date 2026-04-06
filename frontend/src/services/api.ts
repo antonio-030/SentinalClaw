@@ -47,8 +47,8 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Timeout: 12 Min fuer Chat (Agent-Loop mit Tools braucht Zeit), 30s fuer Rest
-  const timeoutMs = url.includes('/chat') ? 720_000 : 30_000;
+  // Timeout: 20 Min für Chat (komplexe Scans/OSINT brauchen Zeit), 30s für Rest
+  const timeoutMs = url.includes('/chat') ? 1_200_000 : 30_000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
