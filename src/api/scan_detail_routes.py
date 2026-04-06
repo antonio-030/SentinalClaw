@@ -10,6 +10,7 @@ Enthaelt Sub-Ressourcen-Endpoints unter /api/v1/scans/{scan_id}:
   - GET  /scans/{id}/phases   -> Scan-Phasen auflisten
 """
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -199,6 +200,43 @@ async def generate_report(
         headers={
             "Content-Disposition": (
                 f'attachment; filename="report-{type}-{scan_id[:8]}.md"'
+            ),
+        },
+    )
+
+
+@router.get("/{scan_id}/report/pdf")
+async def generate_pdf_report(
+    scan_id: str,
+    type: str = Query(
+        default="technical",
+        description="Report-Typ: executive, technical oder compliance",
+    ),
+) -> Response:
+    """Generiert einen PDF-Report mit Autorisierungsnachweis."""
+    from src.shared.pdf_generator import PdfReportGenerator
+
+    valid_types = {"executive", "technical", "compliance"}
+    if type not in valid_types:
+        raise HTTPException(
+            400,
+            f"Unbekannter Report-Typ: {type}. Erlaubt: {', '.join(valid_types)}",
+        )
+
+    db, _job = await _require_scan(scan_id)
+    generator = PdfReportGenerator(db)
+    pdf_data = await generator.generate_pdf(UUID(scan_id), type)
+
+    # Dateiname mit Ziel und Datum
+    target_safe = _job.target.replace(".", "-").replace("/", "-")[:30]
+    date_str = datetime.now(UTC).strftime("%Y%m%d")
+
+    return Response(
+        content=bytes(pdf_data),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="sentinelclaw-{type}-{target_safe}-{date_str}.pdf"'
             ),
         },
     )

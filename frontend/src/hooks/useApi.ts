@@ -15,6 +15,7 @@ export const queryKeys = {
   health: ['health'] as const,
   agentTools: ['agentTools'] as const,
   whitelist: ['whitelist'] as const,
+  settings: ['settings'] as const,
 };
 
 // ── Queries ──────────────────────────────────────────────────────────
@@ -64,12 +65,34 @@ export function useFindings(severity?: string) {
   });
 }
 
-/** Available scan profiles. */
+/** Available scan profiles (builtin + custom). */
 export function useProfiles() {
   return useQuery({
     queryKey: queryKeys.profiles,
-    queryFn: api.profiles,
-    staleTime: 60_000, // profiles rarely change
+    queryFn: api.profiles.list,
+    staleTime: 60_000,
+  });
+}
+
+/** Profil erstellen. */
+export function useCreateProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.profiles.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.profiles });
+    },
+  });
+}
+
+/** Profil löschen. */
+export function useDeleteProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.profiles.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.profiles });
+    },
   });
 }
 
@@ -187,6 +210,26 @@ export function useRevokeTarget() {
     mutationFn: (id: string) => api.whitelist.revoke(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.whitelist });
+    },
+  });
+}
+
+/** Systemeinstellungen laden. */
+export function useSettings() {
+  return useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: api.settings.list,
+    staleTime: 30_000,
+  });
+}
+
+/** Einstellungen aktualisieren. */
+export function useUpdateSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: Record<string, string>) => api.settings.update(settings),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.settings });
     },
   });
 }

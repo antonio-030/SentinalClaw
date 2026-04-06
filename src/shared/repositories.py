@@ -73,7 +73,20 @@ class ScanJobRepository:
     async def update_status(
         self, job_id: UUID, status: ScanStatus, tokens_used: int | None = None
     ) -> None:
-        """Aktualisiert den Status eines Scan-Jobs."""
+        """Aktualisiert den Status eines Scan-Jobs.
+
+        Wirft ValueError wenn der aktuelle Status 'emergency_killed' ist —
+        ein durch den Kill-Switch beendeter Scan darf niemals wieder
+        in einen anderen Status wechseln (Irreversibilität).
+        """
+        # Irreversibilitäts-Prüfung: emergency_killed ist endgültig
+        current_job = await self.get_by_id(job_id)
+        if current_job and current_job.status == ScanStatus.EMERGENCY_KILLED:
+            raise ValueError(
+                f"Scan {job_id} hat Status 'emergency_killed' — "
+                "Statuswechsel ist irreversibel"
+            )
+
         conn = await self._db.get_connection()
         now = datetime.now(UTC).isoformat()
 

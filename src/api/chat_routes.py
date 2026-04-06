@@ -144,6 +144,16 @@ async def _run_agent_background(message: str, scan_id: str | None) -> None:
     except Exception as error:
         logger.error("Agent-Antwort nicht gespeichert", error=str(error))
 
+    # WebSocket-Push an alle verbundenen Clients
+    try:
+        from src.api.websocket_manager import ws_manager
+        await ws_manager.broadcast("agent_response", {
+            "content": response_text,
+            "scan_id": scan_id,
+        })
+    except Exception as ws_err:
+        logger.debug("WS-Push fehlgeschlagen", error=str(ws_err))
+
 
 # ─── Chat-History ────────────────────────────────────────────────────
 

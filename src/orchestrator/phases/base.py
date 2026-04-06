@@ -1,7 +1,7 @@
 """
-Basis-Funktion fuer alle Scan-Phasen.
+Basis-Funktion für alle Scan-Phasen.
 
-Jede Phase ist ein eigenstaendiger Agent-Aufruf ueber die
+Jede Phase ist ein eigenständiger Agent-Aufruf über die
 NemoClaw-Runtime (OpenClaw in OpenShell-Sandbox) mit eigener
 DB-Persistenz, Fehlerbehandlung und Ergebnis-Parsing.
 """
@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from src.agents.nemoclaw_runtime import NemoClawRuntime
+from src.shared.kill_switch import KillSwitch
 from src.shared.logging_setup import get_logger
 from src.shared.phase_repositories import ScanPhaseRepository
 
@@ -76,6 +77,22 @@ async def execute_phase(
         number=phase_number,
         scan_id=str(scan_job_id),
     )
+
+    # Kill-Switch-Prüfung vor der eigentlichen Ausführung
+    if KillSwitch().is_active():
+        logger.warning(
+            "Kill-Switch aktiv — Phase übersprungen",
+            phase=phase_name,
+            scan_id=str(scan_job_id),
+        )
+        result.status = "skipped"
+        result.error = "Kill-Switch aktiv — Phase nicht ausgeführt"
+        await phase_repo.update_status(
+            phase_id,
+            status="skipped",
+            error_message="Kill-Switch aktiv",
+        )
+        return result
 
     try:
         # OpenClaw Agent in der NemoClaw-Sandbox aufrufen

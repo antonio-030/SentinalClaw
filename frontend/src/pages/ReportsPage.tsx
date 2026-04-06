@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
-import { FileText, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { FileText, ChevronDown, ChevronUp, Loader2, FileDown } from 'lucide-react';
 import { useScans } from '../hooks/useApi';
 import { api } from '../services/api';
 import { formatDate } from '../utils/format';
+import { MarkdownRenderer } from '../components/chat/MarkdownRenderer';
 import type { Scan } from '../types/api';
 
 type ReportType = 'executive' | 'technical' | 'compliance';
@@ -17,6 +18,7 @@ export function ReportsPage() {
   const { data: scans = [], isLoading } = useScans();
   const [openReport, setOpenReport] = useState<ReportState | null>(null);
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
+  const [loadingPdf, setLoadingPdf] = useState<string | null>(null);
 
   const completedScans = useMemo(
     () =>
@@ -28,25 +30,39 @@ export function ReportsPage() {
 
   async function handleReport(scanId: string, type: ReportType) {
     const key = `${scanId}-${type}`;
-
-    // Toggle off if the same report is already open
     if (openReport?.scanId === scanId && openReport?.type === type) {
       setOpenReport(null);
       return;
     }
-
     setLoadingReport(key);
     try {
       const content = await api.scans.report(scanId, type);
       setOpenReport({ scanId, type, content });
     } catch (err) {
       setOpenReport({
-        scanId,
-        type,
-        content: `Error: ${err instanceof Error ? err.message : 'Failed to load report'}`,
+        scanId, type,
+        content: `Fehler: ${err instanceof Error ? err.message : 'Report konnte nicht geladen werden'}`,
       });
     } finally {
       setLoadingReport(null);
+    }
+  }
+
+  async function handlePdfDownload(scanId: string, type: ReportType) {
+    const key = `${scanId}-${type}-pdf`;
+    setLoadingPdf(key);
+    try {
+      const blob = await api.scans.reportPdf(scanId, type);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sentinelclaw-${type}-${scanId.slice(0, 8)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`PDF-Fehler: ${err instanceof Error ? err.message : 'Unbekannt'}`);
+    } finally {
+      setLoadingPdf(null);
     }
   }
 
@@ -60,45 +76,40 @@ export function ReportsPage() {
 
   return (
     <div className="space-y-6 max-w-7xl">
-      {/* Header */}
       <div>
         <h1 className="text-xl font-semibold text-text-primary tracking-tight">Reports</h1>
         <p className="mt-1 text-sm text-text-secondary">
-          Generate and view reports for completed scans
+          Reports generieren, anzeigen und als PDF herunterladen
         </p>
       </div>
 
-      {/* Scan List */}
       <div className="space-y-3">
         {completedScans.length === 0 && (
           <div className="rounded-lg border border-border-subtle bg-bg-secondary px-5 py-12 text-center">
             <FileText size={28} className="mx-auto mb-3 text-text-tertiary" strokeWidth={1.5} />
-            <p className="text-sm text-text-tertiary">No completed scans with findings</p>
-            <p className="text-xs text-text-tertiary mt-1">Run a scan to generate reports</p>
+            <p className="text-sm text-text-tertiary">Keine abgeschlossenen Scans vorhanden</p>
+            <p className="text-xs text-text-tertiary mt-1">Starte einen Scan, um Reports zu generieren</p>
           </div>
         )}
 
         {completedScans.map((scan) => {
           const isOpen = openReport?.scanId === scan.id;
           return (
-            <div
-              key={scan.id}
-              className="rounded-lg border border-border-subtle bg-bg-secondary overflow-hidden"
-            >
-              {/* Scan Row */}
+            <div key={scan.id} className="rounded-lg border border-border-subtle bg-bg-secondary overflow-hidden">
+              {/* Scan-Zeile */}
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4">
-                {/* Info */}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-mono text-text-primary truncate">{scan.target}</p>
                   <p className="text-xs text-text-tertiary mt-0.5">
-                    {formatDate(scan.completed_at)} &middot; {scan.tokens_used.toLocaleString()} tokens
+                    {formatDate(scan.completed_at)} &middot; {scan.tokens_used.toLocaleString()} Tokens
                   </p>
                 </div>
 
-                {/* Report Buttons */}
+                {/* Report-Buttons + PDF */}
                 <div className="flex flex-col sm:flex-row gap-2">
                   {(['executive', 'technical', 'compliance'] as ReportType[]).map((type) => {
                     const key = `${scan.id}-${type}`;
+                    const pdfKey = `${key}-pdf`;
                     const isActive = openReport?.scanId === scan.id && openReport?.type === type;
                     const labels: Record<ReportType, string> = {
                       executive: 'Executive',
@@ -106,31 +117,46 @@ export function ReportsPage() {
                       compliance: 'Compliance',
                     };
                     return (
-                      <button
-                        key={type}
-                        onClick={() => handleReport(scan.id, type)}
-                        disabled={loadingReport === key}
-                        className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                          isActive
-                            ? 'bg-accent text-white'
-                            : 'border border-border-default text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
-                      >
-                        {loadingReport === key ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : isActive ? (
-                          <ChevronUp size={12} />
-                        ) : (
-                          <ChevronDown size={12} />
-                        )}
-                        {labels[type]}
-                      </button>
+                      <div key={type} className="flex gap-1">
+                        {/* Anzeigen-Button */}
+                        <button
+                          onClick={() => handleReport(scan.id, type)}
+                          disabled={loadingReport === key}
+                          className={`flex items-center justify-center gap-1.5 rounded-l-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                            isActive
+                              ? 'bg-accent text-white'
+                              : 'border border-border-default text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
+                          } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        >
+                          {loadingReport === key ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : isActive ? (
+                            <ChevronUp size={12} />
+                          ) : (
+                            <ChevronDown size={12} />
+                          )}
+                          {labels[type]}
+                        </button>
+                        {/* PDF-Download-Button */}
+                        <button
+                          onClick={() => handlePdfDownload(scan.id, type)}
+                          disabled={loadingPdf === pdfKey}
+                          title={`${labels[type]}-Report als PDF herunterladen`}
+                          className="flex items-center justify-center rounded-r-md border border-l-0 border-border-default px-2 py-1.5 text-text-tertiary hover:text-accent hover:bg-accent/10 transition-colors disabled:opacity-40"
+                        >
+                          {loadingPdf === pdfKey ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <FileDown size={12} />
+                          )}
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Report Content */}
+              {/* Report-Inhalt */}
               {isOpen && openReport && (
                 <div className="border-t border-border-subtle bg-bg-primary">
                   <div className="px-5 py-3 flex items-center justify-between border-b border-border-subtle">
@@ -141,12 +167,12 @@ export function ReportsPage() {
                       onClick={() => setOpenReport(null)}
                       className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
                     >
-                      Close
+                      Schließen
                     </button>
                   </div>
-                  <pre className="px-5 py-4 text-xs text-text-primary font-mono whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto leading-relaxed">
-                    {openReport.content}
-                  </pre>
+                  <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                    <MarkdownRenderer content={openReport.content} />
+                  </div>
                 </div>
               )}
             </div>

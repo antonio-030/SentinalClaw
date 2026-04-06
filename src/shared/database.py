@@ -188,6 +188,55 @@ CREATE TABLE IF NOT EXISTS authorized_targets (
     created_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_targets_target ON authorized_targets(target);
+
+-- Systemweite Einstellungen (Key-Value mit Kategorien)
+CREATE TABLE IF NOT EXISTS system_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    category    TEXT NOT NULL,
+    value_type  TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    updated_by  TEXT DEFAULT '',
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_settings_category ON system_settings(category);
+
+-- Approval-Requests (Genehmigungsanfragen für Eskalationsstufe 3+)
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id                  TEXT PRIMARY KEY,
+    scan_job_id         TEXT NOT NULL REFERENCES scan_jobs(id),
+    requested_by        TEXT NOT NULL,
+    action_type         TEXT NOT NULL,
+    escalation_level    INTEGER NOT NULL,
+    target              TEXT NOT NULL,
+    tool_name           TEXT NOT NULL,
+    description         TEXT NOT NULL,
+    risk_assessment     TEXT DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'pending',
+    decided_by          TEXT,
+    decided_at          TEXT,
+    expires_at          TEXT NOT NULL,
+    created_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_status ON approval_requests(status);
+CREATE INDEX IF NOT EXISTS idx_approvals_scan ON approval_requests(scan_job_id);
+
+-- Benutzerdefinierte Scan-Profile (ersetzt frozen Dataclasses)
+CREATE TABLE IF NOT EXISTS custom_scan_profiles (
+    id                          TEXT PRIMARY KEY,
+    name                        TEXT NOT NULL UNIQUE,
+    description                 TEXT DEFAULT '',
+    ports                       TEXT NOT NULL,
+    max_escalation_level        INTEGER DEFAULT 2,
+    skip_host_discovery         INTEGER DEFAULT 0,
+    skip_vuln_scan              INTEGER DEFAULT 0,
+    nmap_extra_flags            TEXT DEFAULT '[]',
+    estimated_duration_minutes  INTEGER DEFAULT 5,
+    is_builtin                  INTEGER DEFAULT 0,
+    created_by                  TEXT DEFAULT '',
+    updated_at                  TEXT NOT NULL
+);
 """
 
 

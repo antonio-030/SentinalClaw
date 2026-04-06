@@ -17,10 +17,14 @@ import type {
   HealthResponse,
   KillResponse,
   LoginResponse,
+  MfaActionResponse,
+  MfaLoginResponse,
+  MfaSetupResponse,
   ScanDetail,
   Scan,
   ScanPhase,
   ScanProfile,
+  SystemSetting,
   SystemStatus,
   User,
 } from '../types/api';
@@ -134,11 +138,18 @@ export const api = {
       fetchJson<unknown[]>(`/api/v1/scans/${id}/ports`),
 
     /** GET /api/v1/scans/:id/export?format=... */
-    export: (id: string, format?: string) =>
-      fetch(`${BASE}/api/v1/scans/${id}/export${format ? `?format=${encodeURIComponent(format)}` : ''}`).then((r) => {
+    export: (id: string, format?: string) => {
+      const headers: Record<string, string> = {};
+      const token = localStorage.getItem('sc_token');
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      return fetch(
+        `${BASE}/api/v1/scans/${id}/export${format ? `?format=${encodeURIComponent(format)}` : ''}`,
+        { headers },
+      ).then((r) => {
         if (!r.ok) throw new Error(`Export failed: ${r.status}`);
         return r.blob();
-      }),
+      });
+    },
 
     /** POST /api/v1/scans/compare — compare two scans */
     compare: (data: { scan_id_a: string; scan_id_b: string }) =>
@@ -147,14 +158,32 @@ export const api = {
         body: JSON.stringify(data),
       }),
 
-    /** GET /api/v1/scans/:id/report?type=... — returns raw text/HTML */
-    report: (id: string, type: string) =>
-      fetch(`${BASE}/api/v1/scans/${id}/report?type=${encodeURIComponent(type)}`).then(
+    /** GET /api/v1/scans/:id/report?type=... — returns raw markdown text */
+    report: (id: string, type: string) => {
+      const headers: Record<string, string> = {};
+      const token = localStorage.getItem('sc_token');
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      return fetch(`${BASE}/api/v1/scans/${id}/report?type=${encodeURIComponent(type)}`, { headers }).then(
         (r) => {
           if (!r.ok) throw new Error(`Report failed: ${r.status}`);
           return r.text();
         },
-      ),
+      );
+    },
+
+    /** GET /api/v1/scans/:id/report/pdf?type=... — PDF-Download */
+    reportPdf: (id: string, type: string) => {
+      const headers: Record<string, string> = {};
+      const token = localStorage.getItem('sc_token');
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      return fetch(
+        `${BASE}/api/v1/scans/${id}/report/pdf?type=${encodeURIComponent(type)}`,
+        { headers },
+      ).then((r) => {
+        if (!r.ok) throw new Error(`PDF-Export failed: ${r.status}`);
+        return r.blob();
+      });
+    },
   },
 
   // ── Findings ─────────────────────────────────────────────────────
@@ -176,8 +205,46 @@ export const api = {
 
   // ── Profiles ─────────────────────────────────────────────────────
 
-  /** GET /api/v1/profiles */
-  profiles: () => fetchJson<ScanProfile[]>('/api/v1/profiles'),
+  profiles: {
+    /** GET /api/v1/profiles — alle Profile (builtin + custom) */
+    list: () => fetchJson<ScanProfile[]>('/api/v1/profiles'),
+
+    /** POST /api/v1/profiles — neues Profil erstellen */
+    create: (data: Omit<ScanProfile, 'id' | 'is_builtin' | 'created_by' | 'updated_at'>) =>
+      fetchJson<ScanProfile>('/api/v1/profiles', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
+    /** PUT /api/v1/profiles/:id — Profil bearbeiten */
+    update: (id: string, data: Omit<ScanProfile, 'id' | 'is_builtin' | 'created_by' | 'updated_at'>) =>
+      fetchJson<ScanProfile>(`/api/v1/profiles/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+
+    /** DELETE /api/v1/profiles/:id — Custom-Profil löschen */
+    delete: (id: string) =>
+      fetchJson<void>(`/api/v1/profiles/${id}`, { method: 'DELETE' }),
+  },
+
+  // ── Settings ────────────────────────────────────────────────────
+
+  settings: {
+    /** GET /api/v1/settings — alle Einstellungen */
+    list: () => fetchJson<SystemSetting[]>('/api/v1/settings'),
+
+    /** GET /api/v1/settings/:category — Einstellungen einer Kategorie */
+    byCategory: (category: string) =>
+      fetchJson<SystemSetting[]>(`/api/v1/settings/${category}`),
+
+    /** PUT /api/v1/settings — Batch-Update */
+    update: (settings: Record<string, string>) =>
+      fetchJson<{ updated: number }>('/api/v1/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ settings }),
+      }),
+  },
 
   // ── Audit log ────────────────────────────────────────────────────
 
@@ -193,6 +260,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+
+  /** POST /api/v1/kill/reset — Kill-Switch zurücksetzen + Sandbox starten */
+  killReset: () =>
+    fetchJson<{ status: string; sandbox_started: boolean; message: string }>(
+      '/api/v1/kill/reset',
+      { method: 'POST' },
+    ),
 
   // ── Chat ──────────────────────────────────────────────────────────
 
@@ -233,6 +307,34 @@ export const api = {
       }),
   },
 
+  // ── Approvals (Eskalationsgenehmigungen) ──────────────────────────
+
+  approvals: {
+    /** GET /api/v1/approvals — alle Approval-Requests */
+    list: (status?: string) =>
+      fetchJson<Record<string, unknown>[]>(
+        `/api/v1/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+      ),
+
+    /** PUT /api/v1/approvals/:id/approve */
+    approve: (id: string, reason?: string) =>
+      fetchJson<{ status: string }>(`/api/v1/approvals/${id}/approve`, {
+        method: 'PUT',
+        body: JSON.stringify({ reason: reason ?? '' }),
+      }),
+
+    /** PUT /api/v1/approvals/:id/reject */
+    reject: (id: string, reason?: string) =>
+      fetchJson<{ status: string }>(`/api/v1/approvals/${id}/reject`, {
+        method: 'PUT',
+        body: JSON.stringify({ reason: reason ?? '' }),
+      }),
+  },
+
+  // ── Kill-Verifikation ────────────────────────────────────────────
+
+  killStatus: () => fetchJson<Record<string, unknown>>('/api/v1/kill/status'),
+
   // ── Whitelist (Autorisierte Ziele) ────────────────────────────────
 
   whitelist: {
@@ -269,5 +371,30 @@ export const api = {
 
     /** GET /api/v1/auth/users — list all users (admin only) */
     users: () => fetchJson<User[]>('/api/v1/auth/users'),
+
+    /** POST /api/v1/auth/mfa/login — MFA-Code nach Passwort-Login prüfen */
+    mfaLogin: (mfaSession: string, token: string) =>
+      fetchJson<MfaLoginResponse>('/api/v1/auth/mfa/login', {
+        method: 'POST',
+        body: JSON.stringify({ mfa_session: mfaSession, token }),
+      }),
+
+    /** POST /api/v1/auth/mfa/setup — MFA für eigenen Account einrichten */
+    mfaSetup: () =>
+      fetchJson<MfaSetupResponse>('/api/v1/auth/mfa/setup', { method: 'POST' }),
+
+    /** POST /api/v1/auth/mfa/verify — Ersten TOTP-Code bestätigen */
+    mfaVerify: (secret: string, token: string) =>
+      fetchJson<MfaActionResponse>('/api/v1/auth/mfa/verify', {
+        method: 'POST',
+        body: JSON.stringify({ secret, token }),
+      }),
+
+    /** POST /api/v1/auth/mfa/disable — MFA deaktivieren */
+    mfaDisable: (token: string) =>
+      fetchJson<MfaActionResponse>('/api/v1/auth/mfa/disable', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      }),
   },
 };

@@ -26,9 +26,39 @@ from src.orchestrator.phases.port_scan import run_port_scan
 from src.orchestrator.phases.ssl_analysis import has_https_ports, run_ssl_analysis
 from src.orchestrator.phases.vuln_scan import run_vuln_scan
 from src.shared.database import DatabaseManager
+from src.shared.kill_switch import KillSwitch
 from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+
+def _abort_if_killed(scan_job_id: UUID, phase_name: str) -> bool:
+    """Prüft ob der Kill-Switch aktiv ist und loggt den Abbruch.
+
+    Gibt True zurück wenn der Scan abgebrochen werden muss.
+    """
+    if not KillSwitch().is_active():
+        return False
+    logger.warning(
+        "Kill-Switch aktiv — Phase abgebrochen",
+        phase=phase_name,
+        scan_id=str(scan_job_id),
+    )
+    return True
+
+
+def _build_killed_result(target: str, start_time: float) -> ReconResult:
+    """Erzeugt ein leeres ReconResult für abgebrochene Scans."""
+    return ReconResult(
+        target=target,
+        discovered_hosts=[],
+        open_ports=[],
+        vulnerabilities=[],
+        agent_summary="Scan durch Kill-Switch abgebrochen.",
+        scan_duration_seconds=time.monotonic() - start_time,
+        total_tokens_used=0,
+        phases_completed=0,
+    )
 
 
 async def run_multi_phase_scan(
@@ -71,6 +101,10 @@ async def run_multi_phase_scan(
         scan_id=str(scan_job_id),
     )
 
+    # Kill-Switch-Prüfung vor Phase 1
+    if _abort_if_killed(scan_job_id, "host_discovery"):
+        return _build_killed_result(target, total_start)
+
     # ── Phase 1: Host Discovery ────────────────────────────────
     phase1 = await run_host_discovery(
         target=target,
@@ -80,6 +114,10 @@ async def run_multi_phase_scan(
         allowed_targets=allowed_targets,
     )
     hosts_found = phase1.hosts_found
+
+    # Kill-Switch-Prüfung vor Phase 2
+    if _abort_if_killed(scan_job_id, "port_scan"):
+        return _build_killed_result(target, total_start)
 
     # ── Phase 2: Port-Scan ─────────────────────────────────────
     phase2 = await run_port_scan(
@@ -92,6 +130,10 @@ async def run_multi_phase_scan(
         allowed_targets=allowed_targets,
     )
     ports_found = phase2.ports_found
+
+    # Kill-Switch-Prüfung vor Phase 3
+    if _abort_if_killed(scan_job_id, "vuln_scan"):
+        return _build_killed_result(target, total_start)
 
     # ── Phase 3: Vulnerability Assessment ──────────────────────
     phase3_findings: list[dict] = []
@@ -108,6 +150,10 @@ async def run_multi_phase_scan(
         phase3_findings = phase3.findings_found
     else:
         logger.info("Phase 3 übersprungen (Eskalationsstufe < 2)")
+
+    # Kill-Switch-Prüfung vor Phase 3b
+    if _abort_if_killed(scan_job_id, "ssl_analysis"):
+        return _build_killed_result(target, total_start)
 
     # ── Phase 3b: SSL/TLS-Analyse (nur bei HTTPS-Ports) ─────────
     ssl_findings: list[dict] = []
@@ -127,6 +173,10 @@ async def run_multi_phase_scan(
         phase3_findings.extend(ssl_findings)
     else:
         logger.info("Keine HTTPS-Ports gefunden, SSL-Analyse übersprungen")
+
+    # Kill-Switch-Prüfung vor Phase 4
+    if _abort_if_killed(scan_job_id, "analysis"):
+        return _build_killed_result(target, total_start)
 
     # ── Phase 4: Analyse & Bewertung ───────────────────────────
     phase4 = await run_analysis(

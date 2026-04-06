@@ -20,7 +20,6 @@ from src.shared.logging_setup import get_logger
 from src.shared.types.agent_runtime import (
     LlmMessage,
     LlmResponse,
-    ToolCallRequest,
     ToolDefinition,
 )
 
@@ -65,9 +64,9 @@ async def _invoke_claude_cli(
             process.communicate(input=input_text.encode("utf-8")),
             timeout=timeout,
         )
-    except TimeoutError:
+    except TimeoutError as exc:
         process.kill()
-        raise RuntimeError(f"Claude CLI Timeout nach {timeout}s")
+        raise RuntimeError(f"Claude CLI Timeout nach {timeout}s") from exc
 
     if process.returncode != 0:
         error_msg = stderr.decode("utf-8", errors="replace").strip()
@@ -243,19 +242,34 @@ class ClaudeAboProvider:
 # ─── Provider-Factory ──────────────────────────────────────────────
 
 
-def create_llm_provider() -> "ClaudeAboProvider":  # Rückgabetyp kann auch ClaudeApiProvider sein
+def create_llm_provider() -> "ClaudeAboProvider":
     """Erstellt den passenden LLM-Provider basierend auf der Konfiguration.
 
-    Logik:
-    - SENTINEL_LLM_PROVIDER=claude-abo → Claude Code CLI (Abo, kein API-Key)
-    - SENTINEL_LLM_PROVIDER=claude → Wenn API-Key vorhanden: API, sonst: CLI
-    - Expliziter API-Key vorhanden → API-Provider
-    - Kein API-Key → Abo-Provider (CLI)
+    Unterstützte Provider (SENTINEL_LLM_PROVIDER):
+    - claude-abo  → Claude Code CLI (Abo, kein API-Key nötig)
+    - claude      → Anthropic API direkt (SENTINEL_CLAUDE_API_KEY nötig)
+    - azure       → Azure OpenAI (SENTINEL_AZURE_ENDPOINT + KEY nötig)
+    - ollama      → Lokaler Ollama-Server (SENTINEL_OLLAMA_BASE_URL)
     """
     settings = get_settings()
+    provider = settings.llm_provider
+
+    # Azure OpenAI — DSGVO-konform in EU-Region
+    if provider == "azure":
+        from src.agents.azure_provider import AzureOpenAIProvider
+
+        logger.info("LLM-Provider: Azure OpenAI", deployment=settings.azure_deployment)
+        return AzureOpenAIProvider()
+
+    # Ollama — lokaler LLM-Server für maximale Datensouveränität
+    if provider == "ollama":
+        from src.agents.ollama_provider import OllamaProvider
+
+        logger.info("LLM-Provider: Ollama (lokal)", model=settings.ollama_model)
+        return OllamaProvider()
 
     # Explizit claude-abo gewählt
-    if settings.llm_provider == "claude-abo":
+    if provider == "claude-abo":
         logger.info("LLM-Provider: Claude Code CLI (Abo)")
         return ClaudeAboProvider()
 

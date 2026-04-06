@@ -1,9 +1,11 @@
 // ── Agent Chat Panel — mit persistentem Verlauf ─────────────────────
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, X, Send } from 'lucide-react';
-import Markdown from 'react-markdown';
+import { Bot, X, Send, Wifi, WifiOff } from 'lucide-react';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { ApprovalCard } from './ApprovalCard';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import { api } from '../../services/api';
 
 interface ChatPanelProps {
@@ -43,6 +45,18 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
   const [sending, setSending] = useState(false);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const wsResponseRef = useRef<string | null>(null);
+  const { connected: wsConnected, on: wsOn } = useWebSocket();
+
+  // WebSocket: Agent-Antworten empfangen (schneller als Polling)
+  useEffect(() => {
+    wsOn('agent_response', (data) => {
+      const content = data.content as string;
+      if (content && sending) {
+        wsResponseRef.current = content;
+      }
+    });
+  }, [wsOn, sending]);
 
   // Timer für "denkt seit X Sekunden"
   useEffect(() => {
@@ -88,21 +102,27 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
   }, [isOpen]);
 
   async function pollForAgentResponse(userMessageTime: number): Promise<string | null> {
-    // Pollt die Chat-History bis eine Agent-Antwort NACH der User-Nachricht erscheint
-    const maxPolls = 120; // 10 Minuten bei 5s Intervall
+    // Prüft zuerst WebSocket, dann Polling als Fallback
+    wsResponseRef.current = null;
+    const maxPolls = 120;
     for (let i = 0; i < maxPolls; i++) {
-      await new Promise(r => setTimeout(r, 5000));
+      // WebSocket-Antwort hat Priorität (Echtzeit)
+      if (wsResponseRef.current) {
+        const response = wsResponseRef.current;
+        wsResponseRef.current = null;
+        return response;
+      }
+      await new Promise(r => setTimeout(r, wsConnected ? 1000 : 5000));
       try {
         const history = await api.chat.history();
         if (history && history.length > 0) {
           const last = history[history.length - 1];
-          // Neue Agent-Antwort die NACH unserem Send kam
           if (last.role === 'agent' && new Date(last.created_at).getTime() > userMessageTime) {
             return last.content;
           }
         }
       } catch {
-        // Netzwerkfehler beim Polling ignorieren, weiter versuchen
+        // Fallback-Polling Fehler ignorieren
       }
     }
     return null;
@@ -262,15 +282,7 @@ export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
                     <p className="text-[10px] font-semibold text-accent mb-1">Agent</p>
                   )}
                   {msg.role === 'agent' ? (
-                    <div className="text-[13px] break-words prose prose-invert prose-sm max-w-none
-                      prose-p:my-1 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1
-                      prose-strong:text-text-primary prose-strong:font-semibold
-                      prose-code:text-accent prose-code:bg-accent/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
-                      prose-headings:text-text-primary prose-headings:text-sm prose-headings:mt-2 prose-headings:mb-1
-                      prose-a:text-accent prose-a:no-underline hover:prose-a:underline
-                    ">
-                      <Markdown>{msg.content}</Markdown>
-                    </div>
+                    <MarkdownRenderer content={msg.content} compact />
                   ) : (
                     <p className="text-[13px] whitespace-pre-wrap break-words">{msg.content}</p>
                   )}

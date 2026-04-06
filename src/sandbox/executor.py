@@ -14,6 +14,7 @@ import docker.errors
 import docker
 from src.shared.config import get_settings
 from src.shared.constants.defaults import ALLOWED_SANDBOX_BINARIES
+from src.shared.kill_switch import KillSwitch
 from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -55,6 +56,10 @@ class SandboxExecutor:
         """
         if not command:
             raise ValueError("Leeres Command übergeben")
+
+        # Kill-Switch-Prüfung vor jeder Tool-Ausführung
+        if KillSwitch().is_active():
+            raise RuntimeError("Kill-Switch aktiv — Tool-Ausführung blockiert")
 
         # Prüfe ob das Binary in der Allowlist ist
         binary = command[0]

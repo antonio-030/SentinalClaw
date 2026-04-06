@@ -82,11 +82,49 @@ class KillSwitch:
             activated_at=self._activated_at.isoformat(),
         )
 
+        # Netzwerke sofort trennen (bevor Container gestoppt wird)
+        self._disconnect_networks()
+
         # Sandbox-Container sofort stoppen
         self._stop_sandbox_container()
 
         # OpenShell-Sandbox stoppen (NemoClaw)
         self._stop_openshell_sandbox()
+
+    def _disconnect_networks(self) -> None:
+        """Trennt den Sandbox-Container von allen Docker-Netzwerken.
+
+        Wird VOR dem Container-Stop aufgerufen, damit kein Traffic
+        mehr fließen kann, selbst wenn der Stop-Befehl verzögert wird.
+        """
+        try:
+            client = docker.from_env()
+            container = client.containers.get(_SANDBOX_CONTAINER_NAME)
+            for net_name in ["sentinel-scanning", "sentinel-internal"]:
+                try:
+                    network = client.networks.get(net_name)
+                    network.disconnect(container, force=True)
+                    logger.info(
+                        "network_disconnected",
+                        network=net_name,
+                        container=_SANDBOX_CONTAINER_NAME,
+                    )
+                except NotFound:
+                    # Netzwerk existiert nicht — kein Fehler
+                    pass
+                except DockerException as exc:
+                    logger.warning(
+                        "network_disconnect_failed",
+                        network=net_name,
+                        error=str(exc),
+                    )
+        except NotFound:
+            logger.info("sandbox_not_found_for_disconnect")
+        except DockerException as exc:
+            logger.warning(
+                "network_disconnect_error",
+                error=str(exc),
+            )
 
     def _stop_sandbox_container(self) -> None:
         """Stoppt den Sandbox-Container — fängt alle Fehler ab."""

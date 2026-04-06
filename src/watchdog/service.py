@@ -88,10 +88,11 @@ class Watchdog:
         self._running = False
 
     async def _check_all(self) -> None:
-        """Fuehrt alle Pruefungen in einem Durchlauf aus."""
+        """Führt alle Prüfungen in einem Durchlauf aus."""
         await self._check_scan_timeouts()
         await self._check_sandbox_health()
         self._check_app_health()
+        await self._check_scope_violations()
         await self._check_kill_completion()
 
     # -- Pruefung 1: Scan-Timeouts ------------------------------------------
@@ -202,13 +203,38 @@ class Watchdog:
                 f"({self._health_failures} aufeinanderfolgende Fehler)"
             )
 
-    # -- Pruefung 4: Kill-Vervollstaendigung ---------------------------------
+    # -- Prüfung 4: Scope-Verletzungen ----------------------------------------
+
+    async def _check_scope_violations(self) -> None:
+        """Prüft ob laufende Scans noch im Scope sind (delegiert an scope_checks)."""
+        if self._scan_repo is None:
+            return
+        from src.watchdog.scope_checks import check_scope_violations
+        await check_scope_violations(self._scan_repo, self._settings)
+
+    # -- Prüfung 5: Kill-Vervollständigung ----------------------------------
 
     async def _check_kill_completion(self) -> None:
-        """Eskaliert wenn Container nach Kill-Aktivierung noch laufen."""
+        """Eskaliert wenn Container oder Netzwerk nach Kill-Aktivierung noch aktiv sind."""
         kill_switch = KillSwitch()
         if not kill_switch.is_active():
             return
+
+        # Netzwerk-Verifikation: Prüfe ob Scan-Netzwerke getrennt sind
+        try:
+            from src.shared.network_kill import verify_network_blocked
+            network_blocked = await verify_network_blocked()
+            if not network_blocked:
+                logger.critical(
+                    "watchdog_network_still_connected",
+                    reason="Netzwerk nach Kill-Aktivierung noch verbunden",
+                )
+                # Netzwerk erneut blockieren
+                from src.shared.network_kill import block_scanning_network
+                await block_scanning_network()
+        except Exception as exc:
+            logger.error("watchdog_network_check_failed", error=str(exc))
+
         if self._docker_client is None:
             return
 
@@ -220,14 +246,14 @@ class Watchdog:
                 logger.critical(
                     "watchdog_kill_escalation",
                     container_status=container.status,
-                    reason="Container laeuft noch nach Kill-Aktivierung",
+                    reason="Container läuft noch nach Kill-Aktivierung",
                 )
                 # Direkter Container-Kill als Eskalation (Kill-Pfad 2)
                 container.kill()
                 container.remove(force=True)
                 logger.info("watchdog_container_force_removed")
         except NotFound:
-            # Container existiert nicht — gewuenschter Zustand nach Kill
+            # Container existiert nicht — gewünschter Zustand nach Kill
             pass
         except DockerException as exc:
             logger.error("watchdog_kill_escalation_failed", error=str(exc))

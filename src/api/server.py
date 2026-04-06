@@ -113,6 +113,14 @@ async def lifespan(app: FastAPI):
         KillSwitch().reset()
         logger.info("Kill-Switch zurückgesetzt (war aktiv vom letzten Lauf)")
 
+    # Standard-Einstellungen und Builtin-Profile in die DB säen
+    from src.shared.settings_repository import seed_defaults
+    from src.shared.profile_repository import seed_builtin_profiles
+    from src.shared.settings_service import init_settings_service
+    await seed_defaults(_db)
+    await seed_builtin_profiles(_db)
+    init_settings_service(_db)
+
     # Sandbox-Container starten falls gestoppt
     await _ensure_sandbox_running()
 
@@ -155,7 +163,7 @@ app.add_middleware(
 
 # Oeffentliche Pfade die keine Authentifizierung erfordern
 # /docs, /redoc, /openapi.json nur im Debug-Modus (werden sonst gar nicht gemountet)
-_PUBLIC_PATHS: set[str] = {"/health", "/api/v1/auth/login"}
+_PUBLIC_PATHS: set[str] = {"/health", "/api/v1/auth/login", "/api/v1/auth/mfa/login"}
 if _init_settings.debug:
     _PUBLIC_PATHS |= {"/docs", "/openapi.json", "/redoc"}
 
@@ -204,6 +212,10 @@ from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E40
 from src.api.scan_routes import router as scan_router  # noqa: E402
 from src.api.agent_tool_routes import router as agent_tool_router  # noqa: E402
 from src.api.whitelist_routes import router as whitelist_router  # noqa: E402
+from src.api.settings_routes import router as settings_router  # noqa: E402
+from src.api.approval_routes import router as approval_router  # noqa: E402
+from src.api.kill_verification_routes import router as kill_verify_router  # noqa: E402
+from src.api.mfa_routes import router as mfa_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(scan_router)
@@ -212,6 +224,39 @@ app.include_router(finding_router)
 app.include_router(chat_router)
 app.include_router(agent_tool_router)
 app.include_router(whitelist_router)
+app.include_router(settings_router)
+app.include_router(approval_router)
+app.include_router(kill_verify_router)
+app.include_router(mfa_router)
+
+
+# ─── WebSocket-Endpoint ──────────────────────────────────────────
+
+from fastapi import WebSocket, WebSocketDisconnect  # noqa: E402
+from src.api.websocket_manager import ws_manager  # noqa: E402
+
+
+@app.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket) -> None:
+    """WebSocket für Echtzeit-Chat und Approval-Benachrichtigungen."""
+    # Token aus Query-Parameter lesen (WebSocket hat keinen Auth-Header)
+    token = websocket.query_params.get("token", "")
+    payload = decode_token(token)
+    if payload is None:
+        await websocket.close(code=4001, reason="Token ungültig")
+        return
+
+    user_id = payload.get("sub", "anonymous")
+    await ws_manager.connect(websocket, user_id)
+
+    try:
+        while True:
+            # Heartbeat/Ping empfangen — hält Verbindung offen
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text('{"event":"pong"}')
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, user_id)
 
 
 # ─── Auto-Start: Sandbox beim Server-Start sicherstellen ─────────
@@ -380,6 +425,64 @@ async def emergency_kill(request: Request, body: KillRequest) -> dict:
     return {"status": "killed", "scans_stopped": len(running), "reason": body.reason}
 
 
+@app.post("/api/v1/kill/reset")
+async def reset_kill_switch(request: Request) -> dict:
+    """Setzt den Kill-Switch zurück und startet die Sandbox neu (security_lead+).
+
+    Stellt das System nach einem Emergency-Kill wieder her:
+    1. Kill-Switch zurücksetzen
+    2. Sandbox-Container starten
+    3. Audit-Log schreiben
+    """
+    caller = require_role(request, "security_lead")
+    from src.shared.kill_switch import KillSwitch
+    from src.shared.repositories import AuditLogRepository
+    from src.shared.types.models import AuditLogEntry
+
+    ks = KillSwitch()
+    if not ks.is_active():
+        return {"status": "already_reset", "message": "Kill-Switch ist nicht aktiv"}
+
+    ks.reset()
+
+    # Sandbox neu starten
+    sandbox_started = False
+    try:
+        import docker as docker_lib
+        client = docker_lib.from_env()
+        try:
+            container = client.containers.get("sentinelclaw-sandbox")
+            if container.status != "running":
+                container.start()
+                sandbox_started = True
+        except docker_lib.errors.NotFound:
+            logger.warning("Sandbox-Container nicht gefunden")
+    except Exception as exc:
+        logger.warning("Sandbox-Neustart fehlgeschlagen", error=str(exc))
+
+    # Audit-Log
+    db = await get_db()
+    audit_repo = AuditLogRepository(db)
+    await audit_repo.create(AuditLogEntry(
+        action="kill.reset",
+        resource_type="system",
+        details={"sandbox_restarted": sandbox_started},
+        triggered_by=caller.get("email", "api_user"),
+    ))
+
+    logger.info(
+        "Kill-Switch zurückgesetzt",
+        by=caller.get("email"),
+        sandbox=sandbox_started,
+    )
+
+    return {
+        "status": "reset",
+        "sandbox_started": sandbox_started,
+        "message": "System wiederhergestellt",
+    }
+
+
 @app.get("/api/v1/audit")
 async def list_audit_logs(request: Request, limit: int = 50, action: str | None = None) -> list[dict]:
     """Listet Audit-Log-Eintraege (analyst+)."""
@@ -405,23 +508,6 @@ async def list_audit_logs(request: Request, limit: int = 50, action: str | None 
             "created_at": e.created_at.isoformat(),
         }
         for e in entries
-    ]
-
-
-@app.get("/api/v1/profiles")
-async def list_scan_profiles() -> list[dict]:
-    """Listet alle verfuegbaren Scan-Profile."""
-    from src.shared.scan_profiles import list_profiles
-
-    return [
-        {
-            "name": p.name,
-            "description": p.description,
-            "ports": p.ports,
-            "max_escalation_level": p.max_escalation_level,
-            "estimated_duration_minutes": p.estimated_duration_minutes,
-        }
-        for p in list_profiles()
     ]
 
 

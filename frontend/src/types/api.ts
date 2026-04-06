@@ -43,11 +43,31 @@ export interface ScanPhase {
 }
 
 export interface ScanProfile {
+  id: string;
   name: string;
   description: string;
   ports: string;
   max_escalation_level: number;
+  skip_host_discovery: boolean;
+  skip_vuln_scan: boolean;
+  nmap_extra_flags: string[];
   estimated_duration_minutes: number;
+  is_builtin: boolean;
+  created_by: string;
+  updated_at: string;
+}
+
+// ── Settings ──────────────────────────────────────────────────────────
+
+export interface SystemSetting {
+  key: string;
+  value: string;
+  category: string;
+  value_type: string;
+  label: string;
+  description: string;
+  updated_by: string;
+  updated_at: string;
 }
 
 // ── System / operational ─────────────────────────────────────────────
@@ -154,6 +174,25 @@ export interface User {
 export interface LoginResponse {
   token: string;
   user: User;
+  mfa_required: boolean;
+  mfa_session: string;
+}
+
+export interface MfaLoginResponse {
+  token: string;
+  user: User;
+  mfa_required: boolean;
+  mfa_session: string;
+}
+
+export interface MfaSetupResponse {
+  secret: string;
+  provisioning_uri: string;
+}
+
+export interface MfaActionResponse {
+  status: string;
+  message: string;
 }
 
 // ── Chat ────────────────────────────────────────────────────────────

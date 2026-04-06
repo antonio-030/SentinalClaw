@@ -1,8 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
 import {
   Activity, Box, Brain, Shield, Cpu, HardDrive,
   Container, Wifi, Clock, CheckCircle, XCircle, AlertTriangle,
+  RotateCcw, Loader2,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useStatus, useHealth, useScans, useAudit } from '../hooks/useApi';
@@ -34,6 +35,8 @@ export function MonitoringPage() {
   const { data: health } = useHealth();
   const { data: scans = [] } = useScans();
   const { data: audit = [] } = useAudit();
+  const [resetting, setResetting] = useState(false);
+  const qc = useQueryClient();
 
   const sys = status?.system;
 
@@ -154,6 +157,40 @@ export function MonitoringPage() {
           <InfoRow label="Watchdog" value="Bereit" ok={true} />
           <InfoRow label="Scope-Validator" value="7 Checks aktiv" ok={true} />
           <InfoRow label="PII-Sanitizer" value="Aktiv" ok={true} />
+          {sys?.kill_switch_active && (
+            <div className="mt-3 pt-3 border-t border-border-subtle">
+              <div className="rounded-md bg-severity-critical/10 border border-severity-critical/20 px-3 py-2.5 mb-3">
+                <p className="text-[11px] text-severity-critical leading-relaxed">
+                  Der Notaus ist aktiv. Alle Scans wurden gestoppt. Setze den Kill-Switch
+                  zurück um das System wiederherzustellen.
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  if (!confirm('Kill-Switch zurücksetzen und Sandbox neu starten?')) return;
+                  setResetting(true);
+                  try {
+                    await api.killReset();
+                    qc.invalidateQueries({ queryKey: ['status'] });
+                    qc.invalidateQueries({ queryKey: ['health'] });
+                  } catch (err) {
+                    alert(`Fehler: ${err instanceof Error ? err.message : 'Unbekannt'}`);
+                  } finally {
+                    setResetting(false);
+                  }
+                }}
+                disabled={resetting}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-md bg-status-success/15 border border-status-success/30 text-sm font-semibold text-status-success hover:bg-status-success/25 disabled:opacity-50 transition-colors"
+              >
+                {resetting ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <RotateCcw size={15} />
+                )}
+                System wiederherstellen
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

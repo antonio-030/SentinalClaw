@@ -37,10 +37,19 @@ _ISO27001_MAPPING: dict[str, list[str]] = {
 }
 
 
+# Bestätigungstyp-Labels für die Autorisierungssektion
+_CONFIRMATION_LABELS: dict[str, str] = {
+    "owner": "Eigentümer/Betreiber des Systems",
+    "pentest_mandate": "Pentest-Auftrag / Vertragliche Vereinbarung",
+    "internal": "Interne Freigabe / IT-Abteilung",
+}
+
+
 class ReportGenerator:
     """Erzeugt Markdown-Reports aus Scan-Daten in der Datenbank."""
 
     def __init__(self, db: DatabaseManager) -> None:
+        self._db = db
         self._scan_repo = ScanJobRepository(db)
         self._finding_repo = FindingRepository(db)
         self._audit_repo = AuditLogRepository(db)
@@ -49,6 +58,7 @@ class ReportGenerator:
         """Erzeugt eine Management-taugliche Zusammenfassung."""
         scan, findings = await self._load_scan_data(scan_id)
         severity_counts = _count_severities(findings)
+        auth = await self._load_authorization(scan.target)
         lines: list[str] = []
 
         # Header
@@ -58,6 +68,9 @@ class ReportGenerator:
         lines.append(f"**Datum:** {scan.created_at.strftime('%d.%m.%Y %H:%M')} UTC")
         lines.append(f"**Status:** {scan.status.value.upper()}")
         lines.append("")
+
+        # Autorisierungssektion
+        lines.extend(_format_authorization_section(auth))
 
         # Uebersichts-Statistik
         lines.append("## Zusammenfassung")
@@ -108,6 +121,7 @@ class ReportGenerator:
         """Erzeugt einen vollstaendigen technischen Detailbericht."""
         scan, findings = await self._load_scan_data(scan_id)
         severity_counts = _count_severities(findings)
+        auth = await self._load_authorization(scan.target)
         lines: list[str] = []
 
         # Header
@@ -118,6 +132,9 @@ class ReportGenerator:
         lines.append(f"**Typ:** {scan.scan_type.value} | **Status:** {scan.status.value.upper()}")
         lines.append(f"**Tokens verbraucht:** {scan.tokens_used:,}")
         lines.append("")
+
+        # Autorisierungssektion
+        lines.extend(_format_authorization_section(auth))
 
         # Statistik-Tabelle
         lines.append("## Statistik")
@@ -156,6 +173,7 @@ class ReportGenerator:
         """Erzeugt ein Compliance-Mapping (BSI Grundschutz, ISO 27001)."""
         scan, findings = await self._load_scan_data(scan_id)
         severity_counts = _count_severities(findings)
+        auth = await self._load_authorization(scan.target)
         lines: list[str] = []
 
         # Header
@@ -164,6 +182,9 @@ class ReportGenerator:
         lines.append(f"**Scan-ID:** `{scan.id}`")
         lines.append(f"**Datum:** {scan.created_at.strftime('%d.%m.%Y %H:%M')} UTC")
         lines.append("")
+
+        # Autorisierungssektion
+        lines.extend(_format_authorization_section(auth))
 
         # BSI Grundschutz und ISO 27001 Mapping-Tabellen
         for framework, mapping in [("BSI IT-Grundschutz", _BSI_MAPPING), ("ISO 27001", _ISO27001_MAPPING)]:
@@ -207,6 +228,45 @@ class ReportGenerator:
             raise ValueError(f"Scan-Job {scan_id} nicht gefunden")
         findings = await self._finding_repo.list_by_scan(scan_id)
         return scan, findings
+
+    async def _load_authorization(self, target: str) -> dict | None:
+        """Lädt die Autorisierung für ein Scan-Ziel aus der Whitelist."""
+        conn = await self._db.get_connection()
+        import aiosqlite
+        conn.row_factory = aiosqlite.Row
+        cursor = await conn.execute(
+            "SELECT target, confirmed_by, confirmation, notes, created_at "
+            "FROM authorized_targets WHERE target = ?",
+            (target,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+def _format_authorization_section(auth: dict | None) -> list[str]:
+    """Formatiert die Autorisierungssektion für den Report."""
+    lines: list[str] = []
+    lines.append("## Autorisierung")
+    lines.append("")
+    if auth:
+        label = _CONFIRMATION_LABELS.get(auth["confirmation"], auth["confirmation"])
+        lines.append(f"- **Bestätigungstyp:** {label}")
+        lines.append(f"- **Autorisiert von:** {auth['confirmed_by']}")
+        lines.append(f"- **Autorisiert am:** {auth['created_at']}")
+        if auth.get("notes"):
+            lines.append(f"- **Notizen:** {auth['notes']}")
+        lines.append("")
+        lines.append(
+            "> Dieser Scan wurde gemäß §202a, §303b StGB autorisiert durchgeführt. "
+            "Der Auftraggeber bestätigt die Berechtigung zum aktiven Scannen des Zielsystems."
+        )
+    else:
+        lines.append(
+            "> **Hinweis:** Keine Autorisierung in der Whitelist gefunden. "
+            "Stellen Sie sicher, dass eine gültige Genehmigung vorliegt."
+        )
+    lines.append("")
+    return lines
 
 
 def _count_severities(findings: list[Finding]) -> dict[str, int]:
