@@ -32,7 +32,6 @@ def _build_ssh_command(config: OpenClawConfig) -> list[str]:
     )
     return [
         "ssh",
-        "-tt",  # Force TTY — verhindert Output-Buffering
         "-o", f"ProxyCommand={proxy_cmd}",
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
@@ -169,7 +168,9 @@ class NemoClawRuntime:
             raw_line = await process.stdout.readline()
             if not raw_line:
                 break
+            from src.agents.sandbox_log_stream import _ANSI_RE
             line = raw_line.decode("utf-8", errors="replace").rstrip()
+            line = _ANSI_RE.sub("", line)
             lines.append(line)
 
             # Live-Push über WebSocket wenn verfügbar

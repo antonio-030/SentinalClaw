@@ -14,8 +14,16 @@ from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
-# ANSI-Escape-Codes entfernen (Farben, Cursor etc. aus Docker/SSH-Logs)
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\r")
+# Alle Terminal-Steuerzeichen entfernen (ANSI, CSI, OSC, TTY)
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;?]*[a-zA-Z]"   # CSI-Sequenzen (Farben, Cursor)
+    r"|\x1b\][^\x07]*\x07"       # OSC-Sequenzen
+    r"|\x1b[()][A-Z0-9]"         # Charset-Switching
+    r"|\x1b[>=<]"                 # Keypad/Mode
+    r"|\x1b\[[\?]?[0-9;]*[hl]"   # DEC Private Mode
+    r"|\r"                         # Carriage Return
+    r"|[\x00-\x08\x0e-\x1f]"     # Nicht-druckbare Steuerzeichen
+)
 
 
 async def stream_sandbox_logs(sandbox_name: str) -> None:

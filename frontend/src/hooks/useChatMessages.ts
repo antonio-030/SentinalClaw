@@ -150,6 +150,7 @@ export function useChatMessages(isOpen: boolean) {
       timestamp: nowTimestamp(),
     };
     setMessages(prev => [...prev, userMsg]);
+    setAgentSteps([]);  // Alte Logs leeren bei neuer Nachricht
     setSending(true);
 
     try {
@@ -173,8 +174,7 @@ export function useChatMessages(isOpen: boolean) {
       addSystemMessage(`Fehler: ${errorText}`);
     } finally {
       setSending(false);
-      // Steps NICHT sofort leeren — erst nach kurzem Delay damit der User sie sieht
-      setTimeout(() => setAgentSteps([]), 2000);
+      // Steps bleiben sichtbar bis zur nächsten Nachricht
     }
   }
 
