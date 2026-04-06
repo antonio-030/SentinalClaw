@@ -104,10 +104,13 @@ class NemoClawRuntime:
         if KillSwitch().is_active():
             raise RuntimeError("Kill-Switch ist aktiv")
 
-        # Verfügbarkeit der NemoClaw-Infrastruktur prüfen
+        # Verfügbarkeit prüfen — im Debug-Modus nur Warnung
         status = self.check_availability()
         if not status["available"]:
-            raise RuntimeError(f"NemoClaw nicht verfügbar: {status['reason']}")
+            from src.shared.config import get_settings
+            if not get_settings().debug:
+                raise RuntimeError(f"NemoClaw nicht verfügbar: {status['reason']}")
+            logger.warning("NemoClaw nicht verfügbar, versuche trotzdem", reason=status["reason"])
 
         if not session_id:
             session_id = f"sc-{uuid4().hex[:8]}"
