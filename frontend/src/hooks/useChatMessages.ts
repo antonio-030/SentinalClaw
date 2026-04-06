@@ -50,6 +50,7 @@ export function useChatMessages(isOpen: boolean) {
   const [sending, setSending] = useState(false);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const agentStepsRef = useRef<AgentStep[]>([]);
   const wsResponseRef = useRef<string | null>(null);
   const { connected: wsConnected, on: wsOn } = useWebSocket();
 
@@ -64,7 +65,12 @@ export function useChatMessages(isOpen: boolean) {
   // WebSocket: Live-Schritte des Agents empfangen
   useEffect(() => {
     wsOn('agent_step', (data) => {
-      setAgentSteps(prev => [...prev, data as AgentStep]);
+      const step = data as AgentStep;
+      setAgentSteps(prev => {
+        const updated = [...prev, step];
+        agentStepsRef.current = updated;  // Ref synchron halten
+        return updated;
+      });
     });
   }, [wsOn]);
 
@@ -100,8 +106,10 @@ export function useChatMessages(isOpen: boolean) {
 
   // Alle Agent-Steps als Metadata für die Nachricht aufbereiten
   function buildToolMetadata(): string | undefined {
-    if (agentSteps.length === 0) return undefined;
-    const toolResults = agentSteps.filter(s => s.type === 'tool_result');
+    // Ref nutzen statt State — State hat in der Closure den alten Wert
+    const steps = agentStepsRef.current;
+    if (steps.length === 0) return undefined;
+    const toolResults = steps.filter(s => s.type === 'tool_result');
     const totalDuration = toolResults.reduce((sum, s) => sum + (s.duration_ms ?? 0), 0);
     const tools = toolResults.map(s => ({
       tool: s.tool ?? 'unknown',
@@ -110,11 +118,19 @@ export function useChatMessages(isOpen: boolean) {
       duration_ms: s.duration_ms,
       output_preview: s.output_preview,
     }));
-    // Alle Log-Zeilen als Verlauf speichern
-    const logs = agentSteps.map(s => ({
-      type: s.type,
-      message: s.message ?? s.command ?? s.output_preview ?? '',
-    }));
+    // Alle Log-Zeilen als Verlauf speichern (dedupliziert)
+    const seen = new Set<string>();
+    const logs = steps
+      .map(s => ({
+        type: s.type,
+        message: s.message ?? s.command ?? s.output_preview ?? '',
+      }))
+      .filter(l => {
+        const key = `${l.type}:${l.message}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     return JSON.stringify({ tools, logs, total_duration_ms: totalDuration });
   }
 
@@ -156,6 +172,7 @@ export function useChatMessages(isOpen: boolean) {
     };
     setMessages(prev => [...prev, userMsg]);
     setAgentSteps([]);  // Alte Logs leeren bei neuer Nachricht
+    agentStepsRef.current = [];
     setSending(true);
 
     try {
