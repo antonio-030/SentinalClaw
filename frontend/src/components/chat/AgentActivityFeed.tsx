@@ -1,17 +1,11 @@
-// ── Live-Activity-Feed während der Agent-Arbeit ─────────────────────
-//
-// Zeigt dem Nutzer in Echtzeit, welche Tools der Agent gerade ausführt,
-// welche Ergebnisse zurückkommen und wie lange er schon arbeitet.
+// ── Live-Activity-Feed — Terminal-Style Log-Stream ──────────────────
 
 import { useEffect, useRef } from 'react';
-import {
-  Terminal, CheckCircle, XCircle, Brain, Loader2,
-} from 'lucide-react';
 
 // ── Typen ───────────────────────────────────────────────────────────
 
 export interface AgentStep {
-  type: 'thinking' | 'tool_start' | 'tool_result';
+  type: 'thinking' | 'tool_start' | 'tool_result' | 'log';
   tool?: string;
   command?: string;
   message?: string;
@@ -27,53 +21,59 @@ interface AgentActivityFeedProps {
   elapsedSeconds: number;
 }
 
-// ── Einzelner Schritt im Feed ───────────────────────────────────────
+// ── Log-Zeile im Terminal-Style ─────────────────────────────────────
 
-function StepRow({ step }: { step: AgentStep }) {
-  if (step.type === 'thinking') {
-    return (
-      <div className="flex items-start gap-2 animate-fade-in">
-        <Brain size={14} className="text-text-secondary shrink-0 mt-0.5 animate-pulse" />
-        <span className="text-xs text-text-secondary">
-          {step.message ?? 'Analysiert Ergebnisse...'}
-        </span>
-      </div>
-    );
-  }
+function LogLine({ step, index }: { step: AgentStep; index: number }) {
+  const time = new Date().toLocaleTimeString('de-DE', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
 
   if (step.type === 'tool_start') {
     return (
-      <div className="flex items-start gap-2 animate-fade-in">
-        <Terminal size={14} className="text-accent shrink-0 mt-0.5" />
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs text-text-primary font-mono truncate">
-            {step.tool}{step.command ? ` ${step.command}` : ''}
-          </span>
-          <Loader2 size={12} className="text-accent animate-spin shrink-0" />
-        </div>
+      <div className="flex gap-2 animate-fade-in font-mono text-[11px] leading-relaxed">
+        <span className="text-text-tertiary shrink-0">{time}</span>
+        <span className="text-accent">{'>'}</span>
+        <span className="text-accent truncate">
+          {step.command ?? step.tool ?? 'tool'}
+        </span>
       </div>
     );
   }
 
-  // tool_result
-  const isSuccess = step.success !== false;
-  const durationLabel = step.duration_ms
-    ? `${(step.duration_ms / 1000).toFixed(1)}s`
-    : null;
-
-  return (
-    <div className="flex items-start gap-2 animate-fade-in">
-      {isSuccess ? (
-        <CheckCircle size={14} className="text-status-success shrink-0 mt-0.5" />
-      ) : (
-        <XCircle size={14} className="text-severity-critical shrink-0 mt-0.5" />
-      )}
-      <div className="min-w-0">
-        <span className={`text-xs ${isSuccess ? 'text-status-success' : 'text-severity-critical'}`}>
-          {durationLabel && <span className="font-mono mr-1.5">{durationLabel}</span>}
-          {step.output_preview ?? (isSuccess ? 'Abgeschlossen' : 'Fehlgeschlagen')}
+  if (step.type === 'tool_result') {
+    const color = step.success !== false ? 'text-status-success' : 'text-severity-critical';
+    const icon = step.success !== false ? '✓' : '✗';
+    return (
+      <div className="flex gap-2 animate-fade-in font-mono text-[11px] leading-relaxed">
+        <span className="text-text-tertiary shrink-0">{time}</span>
+        <span className={color}>{icon}</span>
+        <span className={`${color} truncate`}>
+          {step.output_preview ?? (step.success !== false ? 'OK' : 'Fehler')}
         </span>
       </div>
+    );
+  }
+
+  if (step.type === 'thinking') {
+    return (
+      <div className="flex gap-2 animate-fade-in font-mono text-[11px] leading-relaxed">
+        <span className="text-text-tertiary shrink-0">{time}</span>
+        <span className="text-severity-medium animate-pulse">●</span>
+        <span className="text-text-secondary">
+          {step.message ?? 'Agent denkt nach...'}
+        </span>
+      </div>
+    );
+  }
+
+  // log — allgemeine Log-Zeile
+  return (
+    <div className="flex gap-2 animate-fade-in font-mono text-[11px] leading-relaxed">
+      <span className="text-text-tertiary shrink-0">{time}</span>
+      <span className="text-text-tertiary">│</span>
+      <span className="text-text-tertiary truncate">
+        {step.message ?? ''}
+      </span>
     </div>
   );
 }
@@ -85,36 +85,39 @@ export function AgentActivityFeed({ steps, elapsedSeconds }: AgentActivityFeedPr
 
   // Auto-Scroll bei neuen Steps
   useEffect(() => {
-    const timer = setTimeout(() => {
-      scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }, 50);
-    return () => clearTimeout(timer);
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [steps.length]);
+
+  // Nur die letzten 50 Zeilen zeigen
+  const visibleSteps = steps.slice(-50);
 
   return (
     <div className="flex justify-start">
-      <div className="bg-bg-secondary border border-accent/20 rounded-xl rounded-bl-sm px-3 py-2.5 max-w-[90%] w-full">
-        {/* Kopfzeile mit pulsierendem Punkt */}
-        <div className="flex items-center gap-2 mb-2">
+      <div className="bg-bg-primary border border-border-subtle rounded-lg w-full overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-2 px-3 py-2 bg-bg-secondary border-b border-border-subtle">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
           </span>
           <span className="text-[11px] font-semibold text-accent">
-            Agent arbeitet...
+            Agent arbeitet
           </span>
           <span className="text-[10px] text-text-tertiary tabular-nums font-mono ml-auto">
             {elapsedSeconds}s
           </span>
         </div>
 
-        {/* Schrittliste mit vertikaler Linie */}
-        <div className="space-y-1.5 border-l border-border-subtle ml-1 pl-3 max-h-48 overflow-y-auto">
-          {steps.map((step, index) => (
-            <StepRow key={`${step.type}-${index}`} step={step} />
+        {/* Terminal-Log */}
+        <div className="px-3 py-2 max-h-52 overflow-y-auto space-y-0.5 bg-[#0a0c10]">
+          {visibleSteps.length === 0 && (
+            <div className="font-mono text-[11px] text-text-tertiary animate-pulse">
+              Verbinde mit Sandbox-Logs...
+            </div>
+          )}
+          {visibleSteps.map((step, i) => (
+            <LogLine key={`${step.type}-${i}`} step={step} index={i} />
           ))}
-
-          {/* Abbruch-Option nach 15 Sekunden */}
           <div ref={scrollRef} />
         </div>
       </div>

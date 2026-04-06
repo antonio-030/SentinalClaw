@@ -110,7 +110,12 @@ class NemoClawRuntime:
         )
         self._current_process = process
 
-        # Streaming: stdout Zeile für Zeile lesen und live pushen
+        # Parallelen Log-Tail starten für Live-Monitoring
+        from src.agents.sandbox_log_stream import stream_sandbox_logs
+        log_task = asyncio.create_task(
+            stream_sandbox_logs(self._config.sandbox_name)
+        )
+
         lines: list[str] = []
         try:
             total_timeout = self._config.agent_timeout + 30
@@ -125,6 +130,7 @@ class NemoClawRuntime:
             )
         finally:
             self._current_process = None
+            log_task.cancel()  # Log-Tail stoppen wenn Agent fertig
 
         text = "\n".join(lines).strip()
 
