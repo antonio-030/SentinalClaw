@@ -1,18 +1,53 @@
 # SentinelClaw — Production Docker-Compose
-# Startet API, Frontend (Nginx), Sandbox und Watchdog
+# Startet NemoClaw-Gateway, API, Frontend (Nginx), Sandbox und Watchdog
+#
+# LLM-Provider wird im NemoClaw-Gateway konfiguriert:
+#   NEMOCLAW_LLM_PROVIDER=claude|azure|ollama
+#   NEMOCLAW_LLM_API_KEY=...
 
 version: "3.8"
 
 services:
+  # NemoClaw-Gateway — Agent-Runtime mit OpenClaw + OpenShell
+  # Konfiguriert den LLM-Provider (Claude, Azure, Ollama)
+  nemoclaw:
+    image: nvidia/nemoclaw:latest
+    environment:
+      - NEMOCLAW_GATEWAY_NAME=nemoclaw
+      - NEMOCLAW_LLM_PROVIDER=${NEMOCLAW_LLM_PROVIDER:-claude}
+      - NEMOCLAW_LLM_API_KEY=${NEMOCLAW_LLM_API_KEY:-}
+      - NEMOCLAW_SANDBOX_POLICY=strict
+    volumes:
+      - nemoclaw-data:/var/lib/nemoclaw
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "openclaw", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # SentinelClaw API — verbindet sich zum NemoClaw-Gateway
   api:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
     env_file: .env.prod
+    environment:
+      - SENTINEL_OPENSHELL_GATEWAY_NAME=nemoclaw
     ports:
       - "3001:3001"
     volumes:
       - ../data:/app/data
+    depends_on:
+      nemoclaw:
+        condition: service_healthy
     networks:
       - sentinel-internal
     restart: unless-stopped
@@ -27,6 +62,7 @@ services:
       timeout: 10s
       retries: 3
 
+  # Frontend — Nginx mit SSL
   frontend:
     build:
       context: ..
@@ -44,6 +80,7 @@ services:
       - sentinel-internal
     restart: unless-stopped
 
+  # Sandbox — gehärteter Tool-Container (nmap, nuclei)
   sandbox:
     image: sentinelclaw/sandbox:latest
     build:
@@ -69,6 +106,7 @@ services:
       - sentinel-scanning
     restart: unless-stopped
 
+  # Watchdog — überwacht Scans und Kill-Switch
   watchdog:
     build:
       context: ..
@@ -89,6 +127,9 @@ services:
         limits:
           memory: 256m
           cpus: "0.5"
+
+volumes:
+  nemoclaw-data:
 
 networks:
   sentinel-internal:

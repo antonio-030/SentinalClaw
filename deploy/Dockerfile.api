@@ -1,15 +1,18 @@
 # SentinelClaw API — Production Dockerfile
-# Python 3.12 mit uvicorn, laeuft als non-root User
+# Python 3.12 mit NemoClaw/OpenClaw, uvicorn, non-root User
 
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# System-Dependencies (curl fuer Healthcheck, docker.io fuer Sandbox-Steuerung)
+# System-Dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl docker.io && rm -rf /var/lib/apt/lists/*
+    curl docker.io ssh && rm -rf /var/lib/apt/lists/*
 
-# Python-Dependencies zuerst (besseres Layer-Caching)
+# NemoClaw/OpenClaw Agent-Runtime installieren
+RUN pip install --no-cache-dir nemoclaw openclaw
+
+# Python-Dependencies (besseres Layer-Caching)
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e .
 
@@ -17,7 +20,7 @@ RUN pip install --no-cache-dir -e .
 COPY src/ src/
 COPY data/ data/
 
-# Non-root User fuer sichere Ausfuehrung
+# Non-root User für sichere Ausführung
 RUN useradd -m sentinelclaw && \
     chown -R sentinelclaw:sentinelclaw /app/data
 USER sentinelclaw

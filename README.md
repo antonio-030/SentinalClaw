@@ -72,11 +72,11 @@ Benutzer startet Scan (Web-UI / CLI)
 │         sandbox@openshell-my-assistant                      │
 │                                                            │
 │  2. Führt OpenClaw Agent in der Sandbox aus:               │
-│     claude --print                                         │
+│     openclaw run                                           │
 │         --agent sentinelclaw                                │
-│         --agents '{"sentinelclaw":{...}}'                   │
-│         --append-system-prompt-file /sandbox/AGENT.md       │
-│         --allowedTools 'Bash(*)'                            │
+│         --system-prompt-file /sandbox/AGENT.md              │
+│         --tools bash                                        │
+│         --output text                                       │
 │         -p "[Analysiere diese nmap-Ergebnisse...]"          │
 │                                                            │
 │  3. Claude (OpenClaw) analysiert den Prompt:                │
@@ -116,7 +116,7 @@ Der Agent-Chat in der Web-UI nutzt denselben NemoClaw-Stack, aber mit einem Tool
 Chat-UI → POST /api/v1/chat → Chat-Agent (ask_agent)
     │
     ▼
-NemoClaw Runtime → SSH → OpenShell → claude --agent sentinelclaw
+NemoClaw Runtime → SSH → OpenShell → openclaw run --agent sentinelclaw
     │
     ├─ Agent antwortet mit Tool-Markern (```tool bash nmap -sV ...)
     │   → execute_scan_command() → docker exec → Sandbox
@@ -242,7 +242,7 @@ src/
 │   └── agent_tool_routes.py          # Tool-Installation in Sandbox
 │
 ├── agents/
-│   ├── nemoclaw_runtime.py           # NemoClaw Runtime (SSH → OpenShell → claude)
+│   ├── nemoclaw_runtime.py           # NemoClaw Runtime (SSH → OpenShell → OpenClaw)
 │   ├── chat_agent.py                 # Chat-Agent mit Tool-Loop
 │   ├── llm_provider.py               # Provider-Factory (Claude/Azure/Ollama)
 │   ├── azure_provider.py             # Azure OpenAI Provider

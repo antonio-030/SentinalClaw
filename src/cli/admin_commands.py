@@ -45,10 +45,12 @@ async def cmd_status() -> None:
     # LLM-Provider
     print(f"  LLM-Provider:    {settings.llm_provider}")
 
-    # Claude CLI prüfen
+    # NemoClaw/OpenClaw prüfen
     import shutil
-    claude_path = shutil.which("claude")
-    print(f"  Claude CLI:      {'\u2705 ' + claude_path if claude_path else '\u274c Nicht gefunden'}")
+    openshell_path = shutil.which("openshell")
+    openclaw_path = shutil.which("openclaw")
+    print(f"  OpenShell CLI:   {'\u2705 ' + openshell_path if openshell_path else '\u274c Nicht gefunden'}")
+    print(f"  OpenClaw CLI:    {'\u2705 ' + openclaw_path if openclaw_path else '\u274c Nicht gefunden'}")
 
     # Docker prüfen
     try:

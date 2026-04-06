@@ -42,9 +42,20 @@ SENTINEL_ALLOWED_TARGETS=10.10.10.0/24
 # Produktion: Debug ausschalten (deaktiviert /docs und /redoc)
 SENTINEL_DEBUG=false
 
-# LLM-Provider konfigurieren (siehe .env.example fuer Optionen)
-SENTINEL_LLM_PROVIDER=claude-abo
+# LLM-Provider: NemoClaw (Standard)
+SENTINEL_LLM_PROVIDER=nemoclaw
 ```
+
+**NemoClaw LLM-Provider konfigurieren** — in `deploy/docker-compose.prod.yml` oder als Environment-Variable:
+
+```bash
+# LLM-Provider im NemoClaw-Gateway setzen:
+NEMOCLAW_LLM_PROVIDER=claude       # claude, azure oder ollama
+NEMOCLAW_LLM_API_KEY=sk-ant-xxx    # API-Key für den gewählten Provider
+```
+
+Der NemoClaw-Gateway routet die LLM-Anfragen über den OpenShell
+Privacy-Router an den konfigurierten Provider.
 
 ### SSL-Zertifikat erstellen (Self-Signed fuer Tests)
 

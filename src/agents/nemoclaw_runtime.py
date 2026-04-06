@@ -41,37 +41,39 @@ def _build_ssh_command(config: OpenClawConfig) -> list[str]:
     ]
 
 
-# OpenClaw Agent-Definition (JSON für --agents Flag)
-_AGENT_DEF = (
-    '{"sentinelclaw":{'
-    '"description":"SentinelClaw Security-Analyst für Penetration-Tests",'
-    '"prompt":"Du arbeitest als Security-Assistent in der SentinelClaw-Plattform. '
-    'Wenn nach Tools gefragt, liste NUR die Security-Tools aus der AGENT.md auf. '
-    'Erwähne NIEMALS interne Tools (Read, Write, Edit, Bash, Glob, Grep, etc.). '
-    'Antworte auf Deutsch mit Markdown."}}'
-)
+# OpenClaw Agent-Definition für den sentinelclaw-Agent
+_AGENT_CONFIG = {
+    "name": "sentinelclaw",
+    "description": "SentinelClaw Security-Analyst für Penetration-Tests",
+    "prompt": (
+        "Du arbeitest als Security-Assistent in der SentinelClaw-Plattform. "
+        "Wenn nach Tools gefragt, liste NUR die Security-Tools aus der AGENT.md auf. "
+        "Antworte auf Deutsch mit Markdown."
+    ),
+    "allowed_tools": ["bash"],
+}
 
 
 def _build_cli_command(
     system_prompt: str,
     user_message: str,
 ) -> str:
-    """Baut den OpenClaw Agent-Befehl für die Sandbox.
+    """Baut den OpenClaw Agent-Befehl für die NemoClaw-Sandbox.
 
-    Nutzt den 'sentinelclaw' Agent mit AGENT.md als Projektkontext.
-    Der system_prompt wird als --append-system-prompt übergeben
-    (dynamische Tool-Liste, autorisierte Ziele).
+    Nutzt den OpenClaw-Agent 'sentinelclaw' in der OpenShell-Sandbox.
+    Der LLM-Provider wird über den NemoClaw-Gateway konfiguriert
+    (Privacy-Router: Claude, Azure, Ollama).
     """
     escaped_message = shlex.quote(user_message)
 
     return (
         f"cd /sandbox && "
-        f"claude --print "
+        f"openclaw run "
         f"--agent sentinelclaw "
-        f"--agents {shlex.quote(_AGENT_DEF)} "
-        f"--append-system-prompt-file /sandbox/AGENT.md "
-        f"--allowedTools 'Bash(*)' "
-        f"-p {escaped_message}"
+        f"--system-prompt-file /sandbox/AGENT.md "
+        f"--tools bash "
+        f"--output text "
+        f"-- {escaped_message}"
     )
 
 
@@ -216,11 +218,14 @@ class NemoClawRuntime:
             )
             return result
 
-        # 2. claude CLI vorhanden?
-        claude_path = shutil.which("claude")
-        result["details"]["claude_cli"] = claude_path is not None
-        if not claude_path:
-            result["reason"] = "claude CLI nicht installiert."
+        # 2. openclaw CLI vorhanden?
+        openclaw_path = shutil.which("openclaw")
+        result["details"]["openclaw_cli"] = openclaw_path is not None
+        if not openclaw_path:
+            result["reason"] = (
+                "openclaw CLI nicht installiert. "
+                "Installiere OpenClaw: pip install openclaw"
+            )
             return result
 
         result["available"] = True
