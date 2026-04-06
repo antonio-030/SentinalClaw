@@ -7,11 +7,15 @@ als Fallback im Entwicklungsmodus.
 """
 
 import asyncio
+import re
 import shutil
 
 from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+# ANSI-Escape-Codes entfernen (Farben, Cursor etc. aus Docker/SSH-Logs)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\r")
 
 
 async def stream_sandbox_logs(sandbox_name: str) -> None:
@@ -46,6 +50,7 @@ async def stream_sandbox_logs(sandbox_name: str) -> None:
             if not raw:
                 break
             line = raw.decode("utf-8", errors="replace").rstrip()
+            line = _ANSI_RE.sub("", line).strip()
             if not line:
                 continue
             event = classify_log_line(line)

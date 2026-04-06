@@ -173,7 +173,8 @@ export function useChatMessages(isOpen: boolean) {
       addSystemMessage(`Fehler: ${errorText}`);
     } finally {
       setSending(false);
-      setAgentSteps([]);
+      // Steps NICHT sofort leeren — erst nach kurzem Delay damit der User sie sieht
+      setTimeout(() => setAgentSteps([]), 2000);
     }
   }
 
