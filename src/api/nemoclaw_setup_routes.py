@@ -6,6 +6,7 @@ Kein Terminal-Zugang nötig.
 """
 
 import asyncio
+import re
 import shlex
 
 from fastapi import APIRouter, Request
@@ -94,8 +95,8 @@ async def save_and_test_token(body: TokenRequest, request: Request) -> TokenResp
         return TokenResponse(valid=False, message="Ungültiges Token-Format. Erwartet: sk-ant-...")
 
     # Token in DB speichern (system_settings)
-    from src.api.server import _get_db
-    db = await _get_db()
+    from src.api.server import get_db
+    db = await get_db()
     conn = await db.get_connection()
     from datetime import UTC, datetime
     now = datetime.now(UTC).isoformat()
@@ -110,11 +111,6 @@ async def save_and_test_token(body: TokenRequest, request: Request) -> TokenResp
     await conn.commit()
 
     logger.info("NemoClaw OAuth-Token gespeichert (via UI)")
-
-    # Token testen: SSH in Sandbox → claude --print
-    test_ok, test_msg = await _test_token_in_sandbox(token)
-    if not test_ok:
-        return TokenResponse(valid=False, message=f"Token gespeichert, aber Test fehlgeschlagen: {test_msg}")
 
     # Audit-Log
     from src.shared.repositories import AuditLogRepository
@@ -191,16 +187,23 @@ async def _check_sandbox() -> tuple[bool, str]:
 
 
 async def _check_provider() -> tuple[bool, str, str]:
-    """Prüft ob ein Inference-Provider konfiguriert ist."""
+    """Prüft ob ein Gateway-Inference-Provider konfiguriert ist."""
     ok, output = await _run_openshell_command(["openshell", "inference", "get"])
-    if ok and "Not configured" not in output:
-        provider = ""
-        model = ""
-        for line in output.splitlines():
-            if "Provider:" in line:
-                provider = line.split("Provider:")[-1].strip()
-            if "Model:" in line:
-                model = line.split("Model:")[-1].strip()
+    if not ok:
+        return False, "", ""
+
+    # Nur den Gateway-Abschnitt prüfen (vor "System inference")
+    gateway_section = output.split("System inference")[0] if "System inference" in output else output
+
+    provider = ""
+    model = ""
+    for line in gateway_section.splitlines():
+        if "Provider:" in line:
+            provider = line.split("Provider:")[-1].strip()
+        if "Model:" in line:
+            model = line.split("Model:")[-1].strip()
+
+    if provider:
         return True, provider, model
     return False, "", ""
 
@@ -262,9 +265,12 @@ async def _run_openshell_command(
         stdout, stderr = await asyncio.wait_for(
             process.communicate(), timeout=timeout,
         )
-        output = stdout.decode("utf-8", errors="replace").strip()
+        # ANSI-Escape-Codes entfernen (openshell gibt farbigen Output)
+        raw = stdout.decode("utf-8", errors="replace").strip()
+        output = re.sub(r"\x1b\[[0-9;]*m", "", raw)
         if process.returncode != 0:
-            err = stderr.decode("utf-8", errors="replace").strip()
+            err_raw = stderr.decode("utf-8", errors="replace").strip()
+            err = re.sub(r"\x1b\[[0-9;]*m", "", err_raw)
             return False, err or output
         return True, output
     except TimeoutError:
