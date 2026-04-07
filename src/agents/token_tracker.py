@@ -9,7 +9,27 @@ from src.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
-WARN_THRESHOLD = 0.8  # Warnung bei 80%
+def _get_warn_threshold() -> float:
+    """Liest die Warnschwelle aus den Settings (konfigurierbar über UI)."""
+    try:
+        from src.shared.settings_service import get_setting_float_sync
+        return get_setting_float_sync("token_budget_warning_threshold", 0.8)
+    except Exception:
+        return 0.8
+
+
+class TokenBudgetExceededError(RuntimeError):
+    """Wird geworfen wenn das Token-Budget eines Scans erschöpft ist.
+
+    Der Scan wird graceful gestoppt — bisherige Ergebnisse bleiben erhalten.
+    """
+
+    def __init__(self, used: int, budget: int) -> None:
+        self.used = used
+        self.budget = budget
+        super().__init__(
+            f"Token-Budget erschöpft: {used}/{budget} Tokens verbraucht"
+        )
 
 
 class TokenTracker:
@@ -29,7 +49,7 @@ class TokenTracker:
         total = self.total_used
         percent = total / self._budget if self._budget > 0 else 0
 
-        if percent >= WARN_THRESHOLD and not self._warned:
+        if percent >= _get_warn_threshold() and not self._warned:
             self._warned = True
             logger.warning(
                 "Token-Budget bei 80%",
@@ -40,10 +60,11 @@ class TokenTracker:
 
         if self.is_budget_exceeded():
             logger.error(
-                "Token-Budget erschöpft",
+                "Token-Budget erschöpft — Scan wird gestoppt",
                 used=total,
                 budget=self._budget,
             )
+            raise TokenBudgetExceededError(total, self._budget)
 
     @property
     def total_used(self) -> int:
@@ -68,7 +89,7 @@ class TokenTracker:
 
     def should_warn(self) -> bool:
         """Prüft ob die Warnschwelle erreicht ist."""
-        return self.percent_used >= WARN_THRESHOLD
+        return self.percent_used >= _get_warn_threshold()
 
     def summary(self) -> dict:
         """Gibt eine Zusammenfassung des Verbrauchs zurück."""

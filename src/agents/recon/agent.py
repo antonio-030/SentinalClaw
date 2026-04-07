@@ -12,7 +12,7 @@ from src.agents.nemoclaw_runtime import NemoClawRuntime
 from src.agents.recon.parser import parse_agent_output
 from src.agents.recon.prompts import build_scan_system_prompt
 from src.agents.recon.result_types import ReconResult
-from src.agents.token_tracker import TokenTracker
+from src.agents.token_tracker import TokenBudgetExceededError, TokenTracker
 from src.shared.config import get_settings
 from src.shared.logging_setup import get_logger
 from src.shared.types.scope import PentestScope
@@ -59,10 +59,17 @@ class ReconAgent:
             max_iterations=15,
         )
 
-        token_tracker.add_usage(
-            agent_result.total_prompt_tokens,
-            agent_result.total_completion_tokens,
-        )
+        try:
+            token_tracker.add_usage(
+                agent_result.total_prompt_tokens,
+                agent_result.total_completion_tokens,
+            )
+        except TokenBudgetExceededError:
+            logger.warning(
+                "Token-Budget erschöpft — verwende bisherige Ergebnisse",
+                target=target,
+                used=token_tracker.total_used,
+            )
 
         duration = time.monotonic() - start_time
 

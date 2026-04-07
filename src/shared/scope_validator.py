@@ -19,16 +19,23 @@ logger = get_logger(__name__)
 
 # Tool → Eskalationsstufe Zuordnung (Default, konfigurierbar über UI)
 DEFAULT_TOOL_ESCALATION_MAP: dict[str, int] = {
-    # Stufe 0: Passiv
-    "whois": 0, "dig": 0, "host": 0,
-    # Stufe 1: Aktive Scans
-    "nmap": 1, "whatweb": 1, "dirsearch": 1,
-    # Stufe 2: Vulnerability Checks
-    "nuclei": 2, "nikto": 2, "sslscan": 2, "sqlmap_detect": 2,
-    # Stufe 3: Exploitation
-    "metasploit": 3, "sqlmap_exploit": 3, "hydra": 3, "john": 3, "hashcat": 3,
-    # Stufe 4: Post-Exploitation
-    "mimikatz": 4, "linpeas": 4, "winpeas": 4, "chisel": 4,
+    # Stufe 0: Passiv — OSINT, DNS, Whois (kein Zielkontakt)
+    "whois": 0, "dig": 0, "host": 0, "curl": 0, "jq": 0,
+    "shodan": 0, "censys": 0, "theharvester": 0, "sublist3r": 0,
+    "holehe": 0, "python-whois": 0, "dnspython": 0,
+    # Stufe 1: Aktive Scans — Direkter Kontakt mit Ziel
+    "nmap": 1, "whatweb": 1, "dirsearch": 1, "dirb": 1,
+    "wafw00f": 1, "sslyze": 1, "sslscan": 1, "arjun": 1,
+    "netcat": 1, "nc": 1, "socat": 1, "httpie": 1, "paramiko": 1,
+    # Stufe 2: Vulnerability — Schwachstellen-Erkennung + PoC
+    "nuclei": 2, "nikto": 2, "wapiti": 2, "python-nmap": 2,
+    "sqlmap_detect": 2, "pyjwt": 2, "tlsx": 2,
+    # Stufe 3: Exploitation — Aktives Ausnutzen von Schwachstellen
+    "sqlmap": 3, "sqlmap_exploit": 3, "hydra": 3, "john": 3,
+    "hashcat": 3, "msfconsole": 3, "msfvenom": 3, "metasploit": 3,
+    "impacket": 3, "crackmapexec": 3, "pwncat-cs": 3,
+    # Stufe 4: Post-Exploitation — Privilege Escalation, Pivoting
+    "linpeas": 4, "winpeas": 4, "chisel": 4, "mimikatz": 4,
 }
 
 
@@ -101,7 +108,7 @@ def _parse_port_range(port_spec: str) -> set[int]:
 class ScopeValidator:
     """Validiert Tool-Aufrufe gegen den definierten Scope.
 
-    Führt 7 unabhängige Checks durch. Wenn EINER fehlschlägt,
+    Führt 8 unabhängige Checks durch. Wenn EINER fehlschlägt,
     wird der gesamte Aufruf blockiert. Es gibt kein "teilweise erlaubt".
     """
 
@@ -117,11 +124,19 @@ class ScopeValidator:
         port: int | None,
         tool_name: str,
         scope: PentestScope,
+        arguments: str = "",
     ) -> ValidationResult:
-        """Führt alle 7 Scope-Checks durch.
+        """Führt alle 8 Scope-Checks durch.
 
         Gibt BLOCK zurück wenn auch nur EINE Prüfung fehlschlägt.
         """
+        # Check 8: Verbotene Aktionen (Tool+Args gegen Forbidden-Liste)
+        forbidden_result = self._check_forbidden_actions(
+            target, port, tool_name, scope, arguments,
+        )
+        if not forbidden_result.allowed:
+            return forbidden_result
+
         checks = [
             self._check_target_in_scope,
             self._check_target_not_excluded,
@@ -290,3 +305,30 @@ class ScopeValidator:
             check_name="tool_allowed",
             reason=f"Tool '{tool_name}' ist nicht in der Allowlist: {scope.allowed_tools}",
         )
+
+    def _check_forbidden_actions(
+        self,
+        target: str,
+        port: int | None,
+        tool_name: str,
+        scope: PentestScope,
+        arguments: str = "",
+    ) -> ValidationResult:
+        """Check 8: Verstößt der Aufruf gegen die Forbidden-Actions-Liste?
+
+        Diese Prüfung kann NICHT überschrieben werden — verbotene Aktionen
+        (DoS, Ransomware, Massen-Exfiltration) sind IMMER blockiert.
+        """
+        from src.shared.forbidden_action_map import check_forbidden_action
+
+        violated = check_forbidden_action(
+            tool_name, arguments, scope.forbidden_actions,
+        )
+        if violated:
+            return ValidationResult(
+                allowed=False,
+                check_name="forbidden_actions",
+                reason=f"Verbotene Aktion: '{violated}' (Tool: {tool_name})",
+            )
+
+        return ValidationResult(allowed=True, check_name="forbidden_actions")
