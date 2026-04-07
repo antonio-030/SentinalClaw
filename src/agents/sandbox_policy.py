@@ -91,16 +91,18 @@ async def update_policy_with_targets(targets: list[str]) -> dict:
     # Aktuelle Policy lesen
     current = await get_current_policy()
 
-    # Alten scan_targets Block entfernen (falls vorhanden)
+    # Alte SentinelClaw-Blöcke entfernen (scan_targets + mcp_server)
     lines = current.splitlines()
     new_lines: list[str] = []
     skip = False
     for line in lines:
-        if line.strip().startswith("scan_targets:"):
+        # Block-Start erkennen (unsere eingefügten Blöcke)
+        stripped = line.strip()
+        if stripped.startswith("scan_targets:") or stripped.startswith("mcp_server:"):
             skip = True
             continue
-        if skip and (line.startswith("  ") and not line.startswith("  ") + " "):
-            # Nächster Top-Level-Key unter network_policies
+        # Block-Ende: nächster Top-Level-Key unter network_policies (2 Spaces Einrückung)
+        if skip and line and not line.startswith("    ") and not line.startswith("  -"):
             skip = False
         if skip:
             continue

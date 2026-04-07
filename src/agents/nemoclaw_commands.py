@@ -78,21 +78,12 @@ def build_cli_command(
     token = _get_oauth_token()
     token_export = f"export CLAUDE_CODE_OAUTH_TOKEN={shlex.quote(token)} && " if token else ""
 
-    # MCP-Config als JSON für Claude Code
-    mcp_config = (
-        f'{{"mcpServers":{{"sentinelclaw":'
-        f'{{"url":"{mcp_url}/sse"}}'
-        f'}}}}'
-    )
-
     return (
         f"{token_export}"
         f"cd /sandbox && "
-        f"echo '{mcp_config}' > /tmp/mcp.json && "
         f"claude --print "
         f"--agent sentinelclaw "
-        f"--mcp-config /tmp/mcp.json "
-        f"--allowedTools 'Bash({allowed_pattern})' 'mcp__sentinelclaw__*' "
+        f"--allowedTools 'Bash({allowed_pattern})' "
         f"-p {escaped_message}"
     )
 
