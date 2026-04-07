@@ -65,32 +65,25 @@ def build_cli_command(
     user_message: str,
     session_id: str = "",
 ) -> str:
-    """Baut den OpenClaw Agent-Befehl für die NemoClaw-Sandbox.
+    """Baut den Claude Code Agent-Befehl für die Sandbox.
 
-    Nutzt den openclaw CLI (NemoClaw Agent-Runtime) statt claude CLI direkt.
-    Der LLM-Provider wird über den OpenShell Gateway geroutet.
-    Falls openclaw nicht verfügbar ist: Fallback auf claude CLI.
+    Nutzt Claude Code CLI mit dem Abo-OAuth-Token direkt.
+    Die Sandbox (OpenShell) liefert Isolation (Landlock + seccomp).
+    Bash ist auf eine Allowlist beschränkt (konfigurierbar über Web-UI).
     """
     escaped_message = shlex.quote(user_message)
-    sid = shlex.quote(session_id or "sentinelclaw")
     allowed_pattern = build_allowed_tools_pattern()
 
-    # OAuth-Token für Fallback (claude CLI)
+    # OAuth-Token für Claude Code Abo
     token = _get_oauth_token()
     token_export = f"export CLAUDE_CODE_OAUTH_TOKEN={shlex.quote(token)} && " if token else ""
 
-    # OpenClaw (NemoClaw) als primärer Pfad, claude CLI als Fallback
     return (
         f"{token_export}"
         f"cd /sandbox && "
-        f"if command -v openclaw >/dev/null 2>&1; then "
-        f"openclaw agent --agent sentinelclaw --local "
-        f"-m {escaped_message} --session-id {sid}; "
-        f"else "
-        f"claude --print --agent sentinelclaw "
+        f"claude --print "
         f"--allowedTools 'Bash({allowed_pattern})' "
-        f"-p {escaped_message}; "
-        f"fi"
+        f"-p {escaped_message}"
     )
 
 
