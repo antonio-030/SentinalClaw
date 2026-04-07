@@ -16,7 +16,7 @@ from src.shared.token_blacklist import token_blacklist
 # Öffentliche Pfade die keine Authentifizierung erfordern
 _settings = get_settings()
 _PUBLIC_PATHS: set[str] = {
-    "/health", "/metrics",
+    "/health", "/metrics", "/api/v1/system/health",
     "/api/v1/auth/login", "/api/v1/auth/mfa/login",
 }
 if _settings.debug:

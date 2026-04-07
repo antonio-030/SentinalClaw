@@ -84,6 +84,24 @@ async def get_setup_status(request: Request) -> SetupStatus:
     return status
 
 
+@router.post("/sync-config")
+async def sync_sandbox_config(request: Request) -> dict:
+    """Synchronisiert die Agent-Konfiguration (AGENT.md) manuell in die Sandbox.
+
+    Nützlich nach Sandbox-Neustarts oder Konfigurationsänderungen.
+    """
+    require_role(request, "analyst")
+
+    try:
+        from src.api.whitelist_routes import _sync_sandbox_agent_config
+        await _sync_sandbox_agent_config()
+        logger.info("Sandbox-Konfiguration manuell synchronisiert")
+        return {"success": True, "message": "Agent-Konfiguration in Sandbox aktualisiert."}
+    except Exception as error:
+        logger.warning("Manueller Sandbox-Sync fehlgeschlagen", error=str(error))
+        return {"success": False, "message": f"Sync fehlgeschlagen: {error}"}
+
+
 @router.post("/token")
 async def save_and_test_token(body: TokenRequest, request: Request) -> TokenResponse:
     """Speichert den Claude OAuth-Token und testet ihn in der Sandbox."""

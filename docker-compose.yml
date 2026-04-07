@@ -5,6 +5,70 @@
 #           --profile postgresql (PostgreSQL statt SQLite)
 
 services:
+  # API-Server: FastAPI Backend (REST + WebSocket)
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    container_name: sentinelclaw-api
+    restart: unless-stopped
+    labels:
+      sentinelclaw: "true"
+      sentinelclaw.role: "api"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    volumes:
+      - ./data:/app/data
+      - ./workspace:/app/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - sentinel-internal
+      - sentinel-scanning
+    ports:
+      - "${SENTINEL_API_PORT:-3001}:3001"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Frontend: React Web-UI (Nginx)
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: sentinelclaw-frontend
+    restart: unless-stopped
+    labels:
+      sentinelclaw: "true"
+      sentinelclaw.role: "frontend"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    networks:
+      - sentinel-scanning
+    ports:
+      - "${SENTINEL_FRONTEND_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   # MCP-Server: Exponiert Pentest-Tools als MCP-Services
   mcp-server:
     build:

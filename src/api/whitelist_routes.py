@@ -112,10 +112,22 @@ Wenn ein Tool fehlt: "Bitte installiere es unter Einstellungen > Agent Tools."
 """
     escaped = claude_md.replace("'", "'\\''")
     try:
-        await run_in_sandbox(f"cat > /sandbox/AGENT.md << 'ENDOFFILE'\n{escaped}\nENDOFFILE", timeout=10)
-        logger.info("Sandbox CLAUDE.md aktualisiert", targets=len(targets))
+        await run_in_sandbox(
+            f"cat > /sandbox/AGENT.md << 'ENDOFFILE'\n{escaped}\nENDOFFILE",
+            timeout=10,
+        )
+        logger.info("Sandbox AGENT.md aktualisiert", targets=len(targets))
     except Exception as error:
-        logger.warning("CLAUDE.md Sync fehlgeschlagen", error=str(error))
+        logger.warning("AGENT.md Sync fehlgeschlagen", error=str(error))
+
+    # Workspace-Dateien separat synchronisieren (eigener SSH-Aufruf)
+    workspace_cmds = _build_workspace_sync_commands()
+    if workspace_cmds:
+        try:
+            await run_in_sandbox(workspace_cmds, timeout=15)
+            logger.info("Workspace-Dateien synchronisiert")
+        except Exception as error:
+            logger.warning("Workspace-Sync fehlgeschlagen", error=str(error))
 
     # Netzwerk-Policy aktualisieren (Scan-Ziele freischalten)
     from src.agents.sandbox_policy import update_policy_with_targets
@@ -124,6 +136,30 @@ Wenn ein Tool fehlt: "Bitte installiere es unter Einstellungen > Agent Tools."
         await update_policy_with_targets(target_names)
     except Exception as error:
         logger.warning("Policy-Sync fehlgeschlagen", error=str(error))
+
+
+def _build_workspace_sync_commands() -> str:
+    """Erzeugt Shell-Befehle zum Synchronisieren der Workspace-Dateien.
+
+    Gibt einen zusammenhängenden Shell-Befehl zurück (base64-kodiert),
+    der in den gleichen SSH-Aufruf wie AGENT.md eingebaut wird.
+    """
+    import base64
+    from pathlib import Path
+
+    workspace_dir = Path(__file__).resolve().parent.parent.parent / "workspace"
+    if not workspace_dir.is_dir():
+        return ""
+
+    commands = ["mkdir -p /sandbox/.openclaw/workspace"]
+    for filepath in workspace_dir.glob("*.md"):
+        content = filepath.read_bytes()
+        b64 = base64.b64encode(content).decode("ascii")
+        target = f"/sandbox/.openclaw/workspace/{filepath.name}"
+        commands.append(f"printf '%s' '{b64}' | base64 -d > {target}")
+
+    # Semikolon statt && damit alle Dateien geschrieben werden
+    return "; ".join(commands)
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────

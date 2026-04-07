@@ -51,6 +51,9 @@ async def run_startup_tasks(db: DatabaseManager, settings: object) -> None:
     await ensure_sandbox_running()
     check_nemoclaw_on_startup()
 
+    # Agent-Konfiguration in Sandbox synchronisieren
+    await sync_sandbox_config_on_startup()
+
 
 async def _run_auto_backup(db: DatabaseManager) -> None:
     """Erstellt Auto-Backup und räumt alte Backups auf."""
@@ -110,8 +113,14 @@ def check_nemoclaw_on_startup() -> None:
 
 
 async def ensure_sandbox_running() -> None:
-    """Startet den Sandbox-Container falls er gestoppt ist."""
+    """Startet den Sandbox-Container falls er gestoppt ist.
+
+    Nach einem Neustart wird kurz gewartet damit der Container
+    SSH-Verbindungen annehmen kann, bevor der Config-Sync läuft.
+    """
     try:
+        import asyncio
+
         import docker as docker_lib
         client = docker_lib.from_env()
         try:
@@ -119,12 +128,32 @@ async def ensure_sandbox_running() -> None:
             if container.status != "running":
                 container.start()
                 logger.info("Sandbox-Container automatisch gestartet")
+                # Warten bis Container bereit ist für SSH
+                await asyncio.sleep(3)
             else:
                 logger.info("Sandbox-Container laeuft bereits")
         except docker_lib.errors.NotFound:
             logger.warning("Sandbox-Container nicht gefunden")
     except Exception as e:
         logger.debug("Sandbox-Auto-Start fehlgeschlagen", error=str(e))
+
+
+async def sync_sandbox_config_on_startup() -> None:
+    """Synchronisiert AGENT.md in die Sandbox beim Server-Start.
+
+    Stellt sicher dass die Agent-Konfiguration nach jedem
+    Neustart (Server oder Sandbox-Container) aktuell ist.
+    """
+    try:
+        from src.api.whitelist_routes import _sync_sandbox_agent_config
+        await _sync_sandbox_agent_config()
+        logger.info("Sandbox Agent-Konfiguration synchronisiert (Startup)")
+    except Exception as error:
+        logger.warning(
+            "Sandbox-Sync beim Start fehlgeschlagen — "
+            "wird beim nächsten Whitelist-Update nachgeholt",
+            error=str(error),
+        )
 
 
 def enforce_production_requirements(settings: object) -> None:

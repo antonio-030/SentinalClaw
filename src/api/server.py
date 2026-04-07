@@ -127,6 +127,7 @@ from src.api.gdpr_routes import router as gdpr_router  # noqa: E402
 from src.api.kill_verification_routes import router as kill_verify_router  # noqa: E402
 from src.api.metrics_routes import router as metrics_router  # noqa: E402
 from src.api.mfa_routes import router as mfa_router  # noqa: E402
+from src.api.agent_memory_routes import router as agent_memory_router  # noqa: E402
 from src.api.nemoclaw_setup_routes import router as nemoclaw_setup_router  # noqa: E402
 from src.api.org_routes import router as org_router  # noqa: E402
 from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E402
@@ -157,6 +158,7 @@ app.include_router(backup_router)
 app.include_router(metrics_router)
 app.include_router(system_router)
 app.include_router(nemoclaw_setup_router)
+app.include_router(agent_memory_router)
 
 
 # ─── WebSocket-Endpoint ──────────────────────────────────────────
