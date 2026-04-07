@@ -60,7 +60,7 @@ class NemoClawRuntime:
             session_id = f"sc-{uuid4().hex[:8]}"
 
         full_message = build_user_message(user_message, messages)
-        cli_cmd = build_cli_command(system_prompt, full_message)
+        cli_cmd = build_cli_command(system_prompt, full_message, session_id)
         ssh_args = build_ssh_command(self._config)
 
         logger.info(

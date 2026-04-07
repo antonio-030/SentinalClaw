@@ -157,11 +157,11 @@ class Settings(BaseSettings):
     # --- NemoClaw / OpenShell ---
     openshell_gateway_name: str = Field(
         default="nemoclaw",
-        description="OpenShell Gateway-Name",
+        description="NemoClaw Gateway-Name (OpenShell)",
     )
     openshell_sandbox_name: str = Field(
         default="my-assistant",
-        description="OpenShell Sandbox-Name",
+        description="NemoClaw Sandbox-Name",
     )
     openclaw_agent_id: str = Field(
         default="main",
