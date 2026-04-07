@@ -7,9 +7,14 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const DREAMLINE_URL = 'http://localhost:8100';
-const DREAMLINE_API_KEY = 'dl_dd010146f322af9333a08017a395079646e61245fb6088b0c184cb1e';
+const DREAMLINE_URL = process.env.DREAMLINE_URL || 'http://localhost:8100';
+const DREAMLINE_API_KEY = process.env.DREAMLINE_API_KEY || '';
 const PROJECT_NAME = 'SentinelClaw';
+
+if (!DREAMLINE_API_KEY) {
+  // Kein API-Key konfiguriert — Sync überspringen
+  process.exit(0);
+}
 
 const sessionId = process.env.CLAUDE_SESSION_ID || 'unknown';
 const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();

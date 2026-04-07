@@ -102,7 +102,10 @@ async def restore_backup(backup_filename: str, db: DatabaseManager) -> None:
 
     ACHTUNG: Überschreibt die aktuelle Datenbank irreversibel.
     """
-    backup_path = BACKUP_DIR / backup_filename
+    # Sicherheitsprüfung: Pfad muss innerhalb von BACKUP_DIR bleiben
+    backup_path = (BACKUP_DIR / backup_filename).resolve()
+    if not backup_path.is_relative_to(BACKUP_DIR.resolve()):
+        raise ValueError(f"Unzulässiger Backup-Pfad: '{backup_filename}'")
     if not backup_path.exists():
         raise FileNotFoundError(f"Backup '{backup_filename}' nicht gefunden")
 

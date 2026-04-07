@@ -110,6 +110,13 @@ async def change_role(user_id: str, body: ChangeRoleRequest, request: Request) -
     if not user:
         raise HTTPException(404, f"Benutzer '{user_id}' nicht gefunden")
 
+    # Caller darf keine Benutzer mit gleicher oder höherer Rolle modifizieren
+    if ROLES.get(user["role"], 0) >= ROLES.get(caller.get("role", ""), 0):
+        raise HTTPException(
+            403,
+            "Kann keine Benutzer mit gleicher oder höherer Rolle modifizieren",
+        )
+
     # Nur höhere Rollen dürfen niedrigere Rollen vergeben
     if not role_has_permission(caller["role"], body.role):
         raise HTTPException(403, "Kann keine Rolle vergeben die höher ist als die eigene")
