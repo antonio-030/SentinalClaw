@@ -76,7 +76,13 @@ def build_cli_command(
     escaped_message = shlex.quote(user_message)
     allowed_pattern = build_allowed_tools_pattern()
 
+    # OAuth-Token für Claude Code in der Sandbox setzen
+    from src.shared.config import get_settings
+    token = get_settings().openclaw_anthropic_token
+    token_export = f"export CLAUDE_CODE_OAUTH_TOKEN={shlex.quote(token)} && " if token else ""
+
     return (
+        f"{token_export}"
         f"cd /sandbox && "
         f"claude --print "
         f"--agent sentinelclaw "
