@@ -1,5 +1,8 @@
 # SentinelClaw — Docker Compose Konfiguration
-# Startet alle Services für den PoC-Betrieb
+# Installation: ./scripts/setup.sh (startet NemoClaw + alle Container)
+# Danach: docker compose up -d
+# Optional: --profile monitoring (Prometheus + Grafana)
+#           --profile postgresql (PostgreSQL statt SQLite)
 
 services:
   # MCP-Server: Exponiert Pentest-Tools als MCP-Services
@@ -28,7 +31,7 @@ services:
     networks:
       - sentinel-internal
     ports:
-      - "${SENTINEL_MCP_PORT:-8080}:8080"
+      - "${SENTINEL_MCP_PORT:-8081}:8080"
     env_file:
       - .env
     healthcheck:

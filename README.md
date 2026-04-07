@@ -160,71 +160,51 @@ Vorinstalliert im Docker-Image: 23 Tools. Weitere 24 über Web-UI (Einstellungen
 
 ## Installation
 
-### 1. Repository klonen
-
 ```bash
+# 1. Repository klonen
 git clone https://github.com/antonio-030/SentinalClaw.git
 cd SentinalClaw
+
+# 2. Alles installieren (NemoClaw, Container, Backend, Frontend)
+./scripts/setup.sh
+
+# 3. Backend starten (Terminal 1)
+.venv/bin/uvicorn src.api.server:app --host 0.0.0.0 --port 3001
+
+# 4. Frontend starten (Terminal 2)
+cd frontend && npm run dev
 ```
 
-### 2. Umgebung konfigurieren
+**Öffne** [http://localhost:5173](http://localhost:5173) — Login: `admin@sentinelclaw.local` / `admin`
 
-```bash
-cp .env.example .env
-# In .env anpassen:
-#   SENTINEL_ALLOWED_TARGETS=10.10.10.0/24   (Scan-Ziele)
-#   SENTINEL_JWT_SECRET=<mind. 32 Zeichen>    (für Produktion)
-```
+### Was `setup.sh` macht
 
-### 3. Container starten
+1. Prüft Voraussetzungen (Docker, Python, Node.js)
+2. Erstellt `.env` aus `.env.example`
+3. Startet NemoClaw Gateway (wenn `openshell` installiert ist)
+4. Baut und startet alle Docker-Container (MCP-Server, Sandbox, Watchdog)
+5. Erstellt Python-Umgebung und installiert Dependencies
+6. Installiert Frontend-Dependencies
 
-```bash
-# Basis-Services (MCP-Server, Sandbox, Watchdog)
-docker compose up -d
-
-# Optional: Monitoring (Prometheus + Grafana)
-docker compose --profile monitoring up -d
-
-# Optional: PostgreSQL (statt SQLite)
-docker compose --profile postgresql up -d
-```
-
-Alle Container werden automatisch gebaut und gestartet. Beim ersten Start dauert der Build ~2 Minuten.
-
-### 4. Status prüfen
-
-```bash
-docker ps --filter "label=sentinelclaw"
-```
-
-Erwartetes Ergebnis — alle Container `healthy`:
+### Container nach der Installation
 
 | Container | Funktion | Port |
 |---|---|---|
-| `sentinelclaw-mcp` | MCP-Server (Tool-Bridge) | 8080 |
+| `sentinelclaw-mcp` | MCP-Server (Tool-Bridge) | 8081 |
 | `sentinelclaw-sandbox` | Pentest-Tools (nmap, nuclei) | — |
 | `sentinelclaw-watchdog` | Kill-Switch-Überwachung | — |
-| `sentinelclaw-prometheus` | Metriken (optional) | [localhost:9090](http://localhost:9090) |
-| `sentinelclaw-grafana` | Dashboard (optional) | [localhost:3001](http://localhost:3001) |
-| `sentinelclaw-postgres` | Datenbank (optional) | 5432 |
 
-### 5. Backend + Frontend starten
+### Optionale Services
 
 ```bash
-# Backend (Terminal 1)
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn src.api.server:app --host 0.0.0.0 --port 3001
+# Monitoring (Prometheus + Grafana)
+docker compose --profile monitoring up -d
+# → Grafana: http://localhost:3001 (admin / sentinelclaw)
+# → Prometheus: http://localhost:9090
 
-# Frontend (Terminal 2)
-cd frontend && npm install && npm run dev
+# PostgreSQL (statt SQLite)
+docker compose --profile postgresql up -d
 ```
-
-### 6. Öffnen
-
-- **Web-UI**: [http://localhost:5173](http://localhost:5173)
-- **Login**: `admin@sentinelclaw.local` / `admin` (Passwort muss beim ersten Login geändert werden)
-- **Grafana**: [http://localhost:3001](http://localhost:3001) — Login: `admin` / `sentinelclaw`
 
 ---
 
