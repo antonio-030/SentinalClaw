@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, Radar } from 'lucide-react';
+import { Plus, X, Radar, AlertCircle } from 'lucide-react';
 import { api } from '../services/api';
 import { useScans } from '../hooks/useApi';
+import { showToast } from '../components/shared/NotificationToast';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { formatDateShort } from '../utils/format';
 import type { Scan } from '../types/api';
@@ -16,7 +17,7 @@ export function ScansPage() {
   const [ports, setPorts] = useState('');
   const [profile, setProfile] = useState('');
 
-  const { data: scans = [], isLoading } = useScans();
+  const { data: scans = [], isLoading, isError, error, refetch } = useScans();
 
   const createMutation = useMutation({
     mutationFn: api.scans.create,
@@ -27,6 +28,10 @@ export function ScansPage() {
       setTarget('');
       setPorts('');
       setProfile('');
+      showToast('success', 'Scan gestartet', `Ziel: ${target.trim()}`);
+    },
+    onError: (err: Error) => {
+      showToast('error', 'Scan konnte nicht gestartet werden', err.message);
     },
   });
 
@@ -48,6 +53,26 @@ export function ScansPage() {
   }
 
   if (isLoading) return <div className="flex justify-center py-16"><div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" /></div>;
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
+        </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(error as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-7xl">

@@ -5,6 +5,7 @@ import { useStatus } from '../../hooks/useApi';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
 import { ChatPanel } from '../chat/ChatPanel';
+import { ErrorBoundary } from '../shared/ErrorBoundary';
 
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -46,7 +47,9 @@ export function AppLayout() {
 
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
 
         {/* Chat Panel — Desktop: rechtes Panel, Mobile: Slide-Over */}

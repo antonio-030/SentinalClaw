@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
-import { FileText, ChevronDown, ChevronUp, Loader2, FileDown, Trash2 } from 'lucide-react';
+import { FileText, ChevronDown, ChevronUp, Loader2, FileDown, Trash2, AlertCircle } from 'lucide-react';
 import { useScans } from '../hooks/useApi';
 import { api } from '../services/api';
+import { showToast } from '../components/shared/NotificationToast';
 import { formatDate } from '../utils/format';
 import { MarkdownRenderer } from '../components/chat/MarkdownRenderer';
 import { AgentReportsSection } from '../components/reports/AgentReportsSection';
@@ -16,7 +17,7 @@ interface ReportState {
 }
 
 export function ReportsPage() {
-  const { data: scans = [], isLoading, refetch } = useScans();
+  const { data: scans = [], isLoading, isError, error, refetch } = useScans();
   const [openReport, setOpenReport] = useState<ReportState | null>(null);
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
   const [loadingPdf, setLoadingPdf] = useState<string | null>(null);
@@ -57,8 +58,10 @@ export function ReportsPage() {
       await api.scans.delete(scanId);
       if (openReport?.scanId === scanId) setOpenReport(null);
       refetch();
-    } catch {
-      // Fehler still behandeln
+      showToast('success', 'Scan gelöscht', target);
+    } catch (err) {
+      showToast('error', 'Löschen fehlgeschlagen',
+        err instanceof Error ? err.message : 'Unbekannter Fehler');
     } finally {
       setDeletingId(null);
     }
@@ -86,6 +89,26 @@ export function ReportsPage() {
     return (
       <div className="flex justify-center py-16">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
+        </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(error as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
       </div>
     );
   }

@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
-import { GitCompare, Loader2, Plus, Minus, Equal } from 'lucide-react';
+import { GitCompare, Loader2, Plus, Minus, Equal, AlertCircle } from 'lucide-react';
 import { useScans } from '../hooks/useApi';
 import { api } from '../services/api';
 import { formatDate } from '../utils/format';
 import type { Scan, CompareResult } from '../types/api';
 
 export function ComparePage() {
-  const { data: scans = [], isLoading } = useScans();
+  const { data: scans = [], isLoading, isError: isScansError, error: scansError, refetch } = useScans();
   const [scanIdA, setScanIdA] = useState('');
   const [scanIdB, setScanIdB] = useState('');
   const [result, setResult] = useState<CompareResult | null>(null);
@@ -40,6 +40,26 @@ export function ComparePage() {
     return (
       <div className="flex justify-center py-16">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (isScansError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
+        </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(scansError as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
       </div>
     );
   }

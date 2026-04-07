@@ -109,7 +109,6 @@ async def send_chat_message(request: Request, body: ChatRequest) -> ChatResponse
     """Chat mit dem Agent (analyst+). Agent entscheidet autonom ueber Tools."""
     import re
 
-    from fastapi import HTTPException
 
     require_role(request, "analyst")
     message = body.message.strip()
@@ -309,7 +308,7 @@ async def save_agent_report_manual(request: Request, body: SaveReportRequest) ->
 @router.delete("/reports/agent/{report_id}")
 async def delete_agent_report(report_id: str, request: Request) -> dict:
     """Löscht einen Agent-Report (security_lead+)."""
-    caller = require_role(request, "security_lead")
+    require_role(request, "security_lead")
 
     db = await _get_db()
     conn = await db.get_connection()

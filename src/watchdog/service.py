@@ -125,7 +125,8 @@ class Watchdog:
                 )
                 self._execute_kill(
                     f"Scan {scan.id} ueberschreitet maximale Dauer: "
-                    f"{elapsed:.0f}s > {max_duration}s"
+                    f"{elapsed:.0f}s > {max_duration}s",
+                    scan_id=str(scan.id),
                 )
                 await self._scan_repo.update_status(
                     scan.id, ScanStatus.EMERGENCY_KILLED
@@ -260,7 +261,17 @@ class Watchdog:
 
     # -- Kill-Ausfuehrung ---------------------------------------------------
 
-    def _execute_kill(self, reason: str) -> None:
-        """Aktiviert den zentralen KillSwitch (Singleton)."""
+    def _execute_kill(self, reason: str, scan_id: str | None = None) -> None:
+        """Aktiviert den zentralen KillSwitch und sendet Webhook-Benachrichtigung."""
         logger.critical("watchdog_executing_kill", reason=reason)
         KillSwitch().activate("watchdog", reason)
+
+        # Webhook-Benachrichtigung asynchron auslösen (Fire-and-Forget)
+        from src.watchdog.webhook import send_webhook_notification
+        asyncio.ensure_future(
+            send_webhook_notification(
+                event="kill_switch_activated",
+                reason=reason,
+                scan_id=scan_id,
+            )
+        )

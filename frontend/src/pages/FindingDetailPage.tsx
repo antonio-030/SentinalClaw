@@ -2,6 +2,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Trash2 } from 'lucide-react';
 import { api } from '../services/api';
+import { showToast } from '../components/shared/NotificationToast';
 import { SeverityBadge } from '../components/shared/SeverityBadge';
 import { CvssScore } from '../components/shared/CvssScore';
 import type { Severity } from '../types/api';
@@ -21,7 +22,11 @@ export function FindingDetailPage() {
     mutationFn: () => api.findings.delete(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['findings'] });
+      showToast('success', 'Finding gelöscht');
       navigate('/findings');
+    },
+    onError: (err: Error) => {
+      showToast('error', 'Löschen fehlgeschlagen', err.message);
     },
   });
 

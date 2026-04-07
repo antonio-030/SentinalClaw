@@ -1,0 +1,53 @@
+# SentinelClaw — Prometheus Alert-Rules
+# Definiert Warnungen und kritische Alarme für den Betrieb
+
+groups:
+  - name: sentinelclaw_alerts
+    rules:
+      # Kill-Switch wurde aktiviert — Sandbox gestoppt
+      - alert: KillSwitchActivated
+        expr: sentinelclaw_sandbox_running == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kill-Switch aktiviert — Sandbox gestoppt"
+          description: "Der Sandbox-Container ist seit {{ $value }}s nicht erreichbar. Kill-Switch wurde möglicherweise ausgelöst."
+
+      # Sandbox-Container nicht erreichbar
+      - alert: SandboxDown
+        expr: sentinelclaw_sandbox_running == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sandbox-Container nicht verfügbar"
+          description: "Der Sandbox-Container ist seit über 2 Minuten nicht erreichbar. Scans können nicht ausgeführt werden."
+
+      # Token-Budget zu 80% verbraucht
+      - alert: TokenBudgetWarning
+        expr: sentinelclaw_tokens_used_total > 800000
+        labels:
+          severity: warning
+        annotations:
+          summary: "Token-Budget zu 80% verbraucht"
+          description: "Der Gesamt-Token-Verbrauch liegt bei {{ $value }} (Schwelle: 800.000 von 1.000.000)."
+
+      # API-Server nicht erreichbar
+      - alert: APIDown
+        expr: up{job="sentinelclaw-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SentinelClaw API nicht erreichbar"
+          description: "Der API-Server antwortet seit über 1 Minute nicht auf Prometheus-Scrapes."
+
+      # Hohe Finding-Rate — möglicherweise False-Positives
+      - alert: HighFindingRate
+        expr: rate(sentinelclaw_findings_total[5m]) > 10
+        labels:
+          severity: info
+        annotations:
+          summary: "Hohe Finding-Rate erkannt"
+          description: "Mehr als 10 Findings pro Sekunde in den letzten 5 Minuten. Mögliche False-Positives prüfen."

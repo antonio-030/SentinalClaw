@@ -1,0 +1,31 @@
+# SentinelClaw — Prometheus-Konfiguration
+# Scrape-Intervalle und Ziele für das Monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alert-Rules einbinden
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  # SentinelClaw API — Prometheus-Metriken
+  - job_name: "sentinelclaw-api"
+    metrics_path: "/metrics"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: "sentinelclaw-api"
+          environment: "production"
+
+  # MCP-Server — Health-Endpoint
+  - job_name: "sentinelclaw-mcp"
+    metrics_path: "/health"
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["mcp-server:8080"]
+        labels:
+          service: "sentinelclaw-mcp"
+          environment: "production"

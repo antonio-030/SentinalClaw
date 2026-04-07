@@ -17,8 +17,8 @@ logger = get_logger(__name__)
 def _get_approval_timeout() -> int:
     """Liest den Approval-Timeout aus den Settings (konfigurierbar über UI)."""
     try:
-        from src.shared.settings_service import get_setting_int
-        return get_setting_int("approval_timeout_seconds", 300)
+        from src.shared.settings_service import get_setting_int_sync
+        return get_setting_int_sync("approval_timeout_seconds", 300)
     except Exception:
         return 300
 

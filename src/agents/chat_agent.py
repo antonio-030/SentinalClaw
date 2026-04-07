@@ -5,6 +5,10 @@ Nutzt die NemoClaw-Runtime mit dem OpenClaw-Agent 'sentinelclaw'
 in der OpenShell-Sandbox. Der Agent führt Security-Tools autonom
 aus (curl, dig, whois, sqlmap, etc.) und analysiert Ergebnisse.
 
+Wenn NemoClaw nicht verfügbar ist, wird automatisch auf den
+konfigurierten Fallback-Provider (Claude API, Azure, Ollama)
+umgeschaltet — Graceful Degradation statt Absturz.
+
 Chat-History wird als Messages-Liste übergeben, damit der Agent
 den Konversationskontext behält.
 """
@@ -12,6 +16,12 @@ den Konversationskontext behält.
 import time
 from uuid import uuid4
 
+from src.agents.chat_fallback import (
+    get_fallback_provider,
+    log_fallback_event,
+    run_fallback_inference,
+    try_init_nemoclaw,
+)
 from src.agents.chat_system_prompt import load_system_prompt
 from src.agents.nemoclaw_runtime import NemoClawRuntime
 from src.agents.report_persistence import attach_report_notice
@@ -36,8 +46,16 @@ ToolStep = dict[str, str | int | bool]
 # Globale Runtime-Instanz (wird beim ersten Aufruf erstellt)
 _runtime: NemoClawRuntime | None = None
 
+# Aktuell aktiver Provider-Name (für Status-Abfragen)
+_active_provider_name: str = "nemoclaw"
+
 # Maximale Anzahl History-Nachrichten die an Claude gesendet werden
 MAX_HISTORY_MESSAGES = 20
+
+
+def get_active_provider_name() -> str:
+    """Gibt den Namen des aktuell aktiven Providers zurück."""
+    return _active_provider_name
 
 
 async def ask_agent(
@@ -46,36 +64,68 @@ async def ask_agent(
 ) -> tuple[str, list[ToolStep]]:
     """Sendet eine Nachricht an den Agent mit optionaler Chat-History.
 
-    Der Agent kann autonom Tools aufrufen. Tool-Blöcke (```tool)
-    werden in der Docker-Sandbox ausgeführt und das Ergebnis an den
-    Agent zurückgesendet, bis er ohne Tool-Blöcke antwortet.
-
-    Args:
-        message: Aktuelle User-Nachricht.
-        history: Vorherige Nachrichten als Liste von
-                 {"role": "user"/"assistant", "content": "..."}.
+    Versucht zuerst NemoClaw. Bei Fehlern wird automatisch auf den
+    konfigurierten Fallback-Provider umgeschaltet und ein Audit-Event
+    geschrieben. Der User wird über die Degradation informiert.
 
     Returns:
         Tuple aus (Antworttext, Liste der Tool-Steps für Metadata).
     """
-    global _runtime
-
-    if _runtime is None:
-        _runtime = NemoClawRuntime()
+    global _runtime, _active_provider_name
 
     session_id = f"sc-chat-{uuid4().hex[:8]}"
-
-    # Messages-Liste aufbauen: History + aktuelle Nachricht
     messages = _build_messages(message, history)
 
+    # 1. NemoClaw versuchen
+    _runtime, nemoclaw_error = await try_init_nemoclaw(_runtime)
+
+    if nemoclaw_error is None and _runtime is not None:
+        try:
+            _active_provider_name = "nemoclaw"
+            return await _run_tool_loop(messages, session_id)
+        except RuntimeError as error:
+            nemoclaw_error = str(error)
+            logger.warning("NemoClaw-Aufruf fehlgeschlagen", error=nemoclaw_error)
+
+    # 2. Fallback-Provider nutzen wenn NemoClaw nicht verfügbar
+    if nemoclaw_error is not None:
+        return await _handle_fallback(nemoclaw_error, messages, session_id)
+
+    return "Agent-Fehler: Unbekannter Zustand", []
+
+
+async def _handle_fallback(
+    nemoclaw_error: str,
+    messages: list[dict[str, str]],
+    session_id: str,
+) -> tuple[str, list[ToolStep]]:
+    """Führt den Fallback-Pfad aus wenn NemoClaw nicht verfügbar ist."""
+    global _active_provider_name
+
+    provider, provider_name = get_fallback_provider()
+    if provider is None:
+        return (
+            f"Agent-Fehler: NemoClaw nicht verfügbar ({nemoclaw_error}). "
+            f"Kein Fallback-Provider konfiguriert."
+        ), []
+
+    _active_provider_name = provider_name
+    await log_fallback_event(nemoclaw_error, provider_name)
+
     try:
-        return await _run_tool_loop(messages, session_id)
-    except RuntimeError as error:
-        logger.error("Chat-Agent fehlgeschlagen", error=str(error))
-        return f"Agent-Fehler: {error}", []
-    except Exception as error:
-        logger.error("Unerwarteter Chat-Agent-Fehler", error=str(error))
-        return f"Fehler: {error}", []
+        result = await run_fallback_inference(provider, messages, session_id)
+        degradation_notice = (
+            f"\n\n---\n*NemoClaw nicht verfügbar, verwende "
+            f"{provider_name} als Fallback. "
+            f"Eingeschränkte Sandbox-Isolation.*"
+        )
+        return result[0] + degradation_notice, result[1]
+    except Exception as fallback_error:
+        logger.error("Fallback-Provider fehlgeschlagen", error=str(fallback_error))
+        return (
+            f"Agent-Fehler: NemoClaw nicht verfügbar ({nemoclaw_error}). "
+            f"Fallback {provider_name} fehlgeschlagen: {fallback_error}"
+        ), []
 
 
 def _build_messages(
@@ -98,21 +148,15 @@ async def _run_tool_loop(
     messages: list[dict[str, str]],
     session_id: str,
 ) -> tuple[str, list[ToolStep]]:
-    """Agent-Loop: Claude aufrufen, Tools ausführen, wiederholen bis fertig.
-
-    Returns:
-        Tuple aus (Antworttext, gesammelte Tool-Steps für Metadata).
-    """
+    """Agent-Loop: Claude aufrufen, Tools ausführen, wiederholen bis fertig."""
     total_tool_calls = 0
     system_prompt = load_system_prompt()
     all_tool_steps: list[ToolStep] = []
 
     for _iteration in range(MAX_TOOL_CALLS_PER_TURN + 1):
-        # Kill-Switch prüfen
         if KillSwitch().is_active():
             return "Agent gestoppt — Kill-Switch ist aktiv.", all_tool_steps
 
-        # WebSocket: Denk-Phase signalisieren
         await _push_agent_step({
             "type": "thinking",
             "message": f"Agent analysiert... (Iteration {_iteration + 1})",
@@ -120,7 +164,6 @@ async def _run_tool_loop(
             "total_tools": total_tool_calls,
         })
 
-        # Claude mit voller Message-History aufrufen
         result = await _runtime.run_agent(
             system_prompt=system_prompt,
             messages=messages,
@@ -128,16 +171,12 @@ async def _run_tool_loop(
         )
 
         agent_text = result.final_output
-
-        # Tool-Marker parsen
         markers = parse_tool_markers(agent_text)
 
-        # Keine Marker → Agent ist fertig — Report-Persistierung prüfen
         if not markers:
             response = strip_tool_markers(agent_text)
             return await attach_report_notice(response), all_tool_steps
 
-        # Iteration-Limit erreicht
         if total_tool_calls + len(markers) > MAX_TOOL_CALLS_PER_TURN:
             logger.warning("Tool-Limit erreicht", total=total_tool_calls)
             response = strip_tool_markers(agent_text) + (
@@ -146,19 +185,15 @@ async def _run_tool_loop(
             )
             return await attach_report_notice(response), all_tool_steps
 
-        # Claude's Antwort (mit Markern) als Assistant-Message anhängen
         messages.append({"role": "assistant", "content": agent_text})
 
-        # Tools ausführen — Steps werden gesammelt und per WebSocket gepusht
         tool_results, steps = await _execute_tools(markers, session_id)
         all_tool_steps.extend(steps)
         total_tool_calls += len(markers)
 
-        # Ergebnisse als User-Message anhängen
         results_text = _format_tool_results(tool_results)
         messages.append({"role": "user", "content": results_text})
 
-    # Sollte nicht erreicht werden — trotzdem Report-Persistierung prüfen
     response = strip_tool_markers(agent_text)
     return await attach_report_notice(response), all_tool_steps
 
@@ -166,11 +201,7 @@ async def _run_tool_loop(
 async def _execute_tools(
     markers: list, session_id: str,
 ) -> tuple[list[tuple[str, str]], list[ToolStep]]:
-    """Führt Tool-Marker in der Sandbox aus.
-
-    Returns:
-        Tuple aus (Ergebnis-Liste, Tool-Steps für Metadata/WebSocket).
-    """
+    """Führt Tool-Marker in der Sandbox aus."""
     results: list[tuple[str, str]] = []
     steps: list[ToolStep] = []
 
@@ -179,44 +210,26 @@ async def _execute_tools(
         tool_name = validated.binary if validated.is_valid else "unknown"
 
         if not validated.is_valid:
-            results.append((
-                marker.raw_command,
-                f"ABGELEHNT: {validated.rejection_reason}",
-            ))
+            results.append((marker.raw_command, f"ABGELEHNT: {validated.rejection_reason}"))
             steps.append({
                 "type": "tool_result", "tool": tool_name,
                 "success": False, "output_preview": validated.rejection_reason or "",
                 "duration_ms": 0,
             })
-            logger.warning(
-                "Tool-Aufruf abgelehnt",
-                command=marker.raw_command[:80],
-                reason=validated.rejection_reason,
-                session_id=session_id,
-            )
             continue
 
-        # WebSocket: Tool startet
         await _push_agent_step({
-            "type": "tool_start",
-            "tool": tool_name,
+            "type": "tool_start", "tool": tool_name,
             "command": marker.raw_command[:200],
         })
 
         start_time = time.monotonic()
         try:
-            output = await execute_scan_command(
-                [validated.binary, *validated.arguments],
-            )
+            output = await execute_scan_command([validated.binary, *validated.arguments])
             duration = time.monotonic() - start_time
-
-            # Output begrenzen
             if len(output) > MAX_TOOL_OUTPUT_LENGTH:
                 output = output[:MAX_TOOL_OUTPUT_LENGTH] + "\n... (gekürzt)"
-
             results.append((marker.raw_command, output))
-
-            # WebSocket: Tool fertig (Erfolg)
             step: ToolStep = {
                 "type": "tool_result", "tool": tool_name,
                 "success": True, "output_preview": output[:300],
@@ -224,18 +237,9 @@ async def _execute_tools(
             }
             steps.append(step)
             await _push_agent_step(step)
-
-            logger.info(
-                "Tool ausgeführt",
-                binary=validated.binary,
-                output_length=len(output),
-                session_id=session_id,
-            )
         except Exception as error:
             duration = time.monotonic() - start_time
             results.append((marker.raw_command, f"FEHLER: {error}"))
-
-            # WebSocket: Tool fertig (Fehler)
             step = {
                 "type": "tool_result", "tool": tool_name,
                 "success": False, "output_preview": str(error)[:300],
@@ -244,21 +248,11 @@ async def _execute_tools(
             steps.append(step)
             await _push_agent_step(step)
 
-            logger.error(
-                "Tool-Ausführung fehlgeschlagen",
-                command=marker.raw_command[:80],
-                error=str(error),
-                session_id=session_id,
-            )
-
     return results, steps
 
 
 async def _push_agent_step(data: ToolStep) -> None:
-    """Pusht einen Tool-Step über WebSocket an alle verbundenen Clients.
-
-    Fehler werden stillschweigend ignoriert — WebSocket ist optional.
-    """
+    """Pusht einen Tool-Step über WebSocket (optional, Fehler ignoriert)."""
     try:
         from src.api.websocket_manager import ws_manager
         await ws_manager.broadcast("agent_step", data)
@@ -267,12 +261,9 @@ async def _push_agent_step(data: ToolStep) -> None:
 
 
 def _format_tool_results(tool_results: list[tuple[str, str]]) -> str:
-    """Formatiert Tool-Ergebnisse als Text fuer den naechsten Claude-Aufruf."""
+    """Formatiert Tool-Ergebnisse als Text für den nächsten Claude-Aufruf."""
     parts: list[str] = ["Hier sind die Tool-Ergebnisse:\n"]
-
     for command, output in tool_results:
         parts.append(f"━━━ {command} ━━━\n{output}\n")
-
     parts.append("Analysiere die Ergebnisse und fahre fort.")
-
     return "\n".join(parts)

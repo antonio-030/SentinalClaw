@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Radar, AlertTriangle, ShieldAlert, Activity } from 'lucide-react';
+import { Radar, AlertTriangle, ShieldAlert, Activity, AlertCircle } from 'lucide-react';
 import { useStatus, useScans, useFindings } from '../hooks/useApi';
 import { MetricCard } from '../components/shared/MetricCard';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -11,13 +11,15 @@ import { formatDateShort, compareSeverity } from '../utils/format';
 import type { Scan, Finding } from '../types/api';
 
 export function DashboardPage() {
-  const { data: status, isLoading: isLoadingStatus } = useStatus();
+  const { data: status, isLoading: isLoadingStatus, isError: isStatusError, error: statusError, refetch: refetchStatus } = useStatus();
 
-  const { data: scans = [], isLoading: isLoadingScans } = useScans();
+  const { data: scans = [], isLoading: isLoadingScans, isError: isScansError, error: scansError, refetch: refetchScans } = useScans();
 
-  const { data: findings = [], isLoading: isLoadingFindings } = useFindings();
+  const { data: findings = [], isLoading: isLoadingFindings, isError: isFindingsError, error: findingsError, refetch: refetchFindings } = useFindings();
 
   const isLoading = isLoadingStatus || isLoadingScans || isLoadingFindings;
+  const isError = isStatusError || isScansError || isFindingsError;
+  const firstError = statusError || scansError || findingsError;
 
   const runningScans = status?.scans.running ?? 0;
   const criticalFindings = findings.filter((f: Finding) => f.severity === 'critical').length;
@@ -41,6 +43,26 @@ export function DashboardPage() {
     return (
       <div className="flex justify-center py-16">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
+        </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(firstError as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => { refetchStatus(); refetchScans(); refetchFindings(); }}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
       </div>
     );
   }

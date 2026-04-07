@@ -89,12 +89,20 @@ export interface SystemStatus {
   };
 }
 
+export interface NemoClawHealthStatus {
+  available: boolean;
+  provider: string;
+  last_check: string;
+  reason: string;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;
   provider: string;
   sandbox_running: boolean;
   db_connected: boolean;
+  nemoclaw: NemoClawHealthStatus;
 }
 
 export interface AuditEntry {

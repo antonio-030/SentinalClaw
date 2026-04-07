@@ -1,11 +1,11 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import {
-  Activity, Box, Brain, Shield, Cpu, HardDrive,
-  Container, Wifi, Clock, CheckCircle, XCircle, AlertTriangle,
-  RotateCcw, Loader2,
+  Activity, Shield, Container,
+  RotateCcw, Loader2, AlertCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { NemoClawPanel } from '../components/dashboard/NemoClawPanel';
 import { useStatus, useHealth, useScans, useAudit } from '../hooks/useApi';
 import { formatDate } from '../utils/format';
 
@@ -31,10 +31,13 @@ function InfoRow({ label, value, ok }: { label: string; value: string; ok?: bool
 }
 
 export function MonitoringPage() {
-  const { data: status } = useStatus();
-  const { data: health } = useHealth();
-  const { data: scans = [] } = useScans();
-  const { data: audit = [] } = useAudit();
+  const { data: status, isError: isStatusError, error: statusError, refetch: refetchStatus } = useStatus();
+  const { data: health, isError: isHealthError, refetch: refetchHealth } = useHealth();
+  const { data: scans = [], isError: isScansError, refetch: refetchScans } = useScans();
+  const { data: audit = [], isError: isAuditError, refetch: refetchAudit } = useAudit();
+
+  const isError = isStatusError || isHealthError || isScansError || isAuditError;
+  const firstError = statusError;
   const [resetting, setResetting] = useState(false);
   const qc = useQueryClient();
 
@@ -45,6 +48,26 @@ export function MonitoringPage() {
   const failedScans = scans.filter(s => s.status === 'failed' || s.status === 'emergency_killed');
 
   const recentAudit = useMemo(() => audit.slice(0, 10), [audit]);
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
+        </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(firstError as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => { refetchStatus(); refetchHealth(); refetchScans(); refetchAudit(); }}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -58,37 +81,7 @@ export function MonitoringPage() {
       </div>
 
       {/* NemoClaw Runtime Status */}
-      <div className="rounded-lg border border-accent/20 bg-accent/5 p-5">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-accent/10">
-            <Brain size={22} className="text-accent" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-text-primary">NVIDIA NemoClaw</h2>
-            <p className="text-xs text-text-secondary">Agent Runtime & Sandbox Orchestrierung</p>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <StatusDot ok={!!sys?.nemoclaw_available} />
-            <span className="text-xs font-medium text-text-primary">
-              {sys?.nemoclaw_available ? 'Verbunden' : 'Nicht erreichbar'}
-            </span>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="rounded-md bg-bg-secondary border border-border-subtle p-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">OpenClaw Agent</p>
-            <p className="text-sm font-mono text-text-primary">{sys?.nemoclaw_available ? (sys?.nemoclaw_version || 'Aktiv') : 'Nicht verbunden'}</p>
-          </div>
-          <div className="rounded-md bg-bg-secondary border border-border-subtle p-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">LLM Provider</p>
-            <p className="text-sm font-mono text-text-primary">{sys?.llm_provider ?? '--'}</p>
-          </div>
-          <div className="rounded-md bg-bg-secondary border border-border-subtle p-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-1">OpenShell</p>
-            <p className="text-sm font-mono text-text-primary">{sys?.openshell_available ? 'Landlock + seccomp' : 'Nicht installiert'}</p>
-          </div>
-        </div>
-      </div>
+      <NemoClawPanel sys={sys} health={health} />
 
       {/* System-Komponenten Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

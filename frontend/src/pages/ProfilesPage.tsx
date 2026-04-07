@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProfiles, useCreateProfile, useDeleteProfile } from '../hooks/useApi';
 import {
-  Layers, Clock, Zap, Globe, Loader2, Plus, Trash2, Shield, X,
+  Layers, Clock, Zap, Globe, Loader2, Plus, Trash2, Shield, X, AlertCircle,
 } from 'lucide-react';
+import { showToast } from '../components/shared/NotificationToast';
 import type { ScanProfile } from '../types/api';
 
 const ESCALATION_LABELS: Record<number, string> = {
@@ -108,8 +109,14 @@ function ProfileFormModal({ onClose }: { onClose: () => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await createMutation.mutateAsync(form);
-    onClose();
+    try {
+      await createMutation.mutateAsync(form);
+      showToast('success', 'Profil erstellt', form.name);
+      onClose();
+    } catch (err) {
+      showToast('error', 'Profil konnte nicht erstellt werden',
+        err instanceof Error ? err.message : 'Unbekannter Fehler');
+    }
   }
 
   return (
@@ -199,12 +206,17 @@ function ProfileFormModal({ onClose }: { onClose: () => void }) {
 // ── Hauptseite ──────────────────────────────────────────────────────
 
 export function ProfilesPage() {
-  const { data: profiles, isLoading, isError, error } = useProfiles();
+  const { data: profiles, isLoading, isError, error, refetch } = useProfiles();
   const deleteMutation = useDeleteProfile();
   const [showCreate, setShowCreate] = useState(false);
 
   function handleDelete(id: string) {
-    if (confirm('Profil wirklich löschen?')) deleteMutation.mutate(id);
+    if (confirm('Profil wirklich löschen?')) {
+      deleteMutation.mutate(id, {
+        onSuccess: () => showToast('success', 'Profil gelöscht'),
+        onError: (err: Error) => showToast('error', 'Löschen fehlgeschlagen', err.message),
+      });
+    }
   }
 
   if (isLoading) {
@@ -217,12 +229,20 @@ export function ProfilesPage() {
 
   if (isError) {
     return (
-      <div className="max-w-4xl mx-auto">
-        <div className="rounded-lg border border-severity-high/20 bg-severity-high/5 px-5 py-4">
-          <p className="text-sm text-severity-high">
-            Fehler: {(error as Error)?.message ?? 'Unbekannter Fehler'}
-          </p>
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
         </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(error as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
       </div>
     );
   }

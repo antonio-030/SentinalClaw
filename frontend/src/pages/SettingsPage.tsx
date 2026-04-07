@@ -18,6 +18,7 @@ import {
   Eye,
   Layers,
   Database,
+  AlertCircle,
 } from 'lucide-react';
 import type { SystemSetting } from '../types/api';
 
@@ -358,12 +359,32 @@ function SystemTab() {
 
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('system');
-  const { data: settings = [], isLoading } = useSettings();
+  const { data: settings = [], isLoading, isError, error, refetch } = useSettings();
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-24">
         <Loader2 size={24} className="animate-spin text-text-tertiary" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
+        </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(error as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
       </div>
     );
   }

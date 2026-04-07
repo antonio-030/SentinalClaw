@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, FileText, Download, Trash2, XCircle } from 'lucide-react';
 import { useScan } from '../hooks/useApi';
 import { api } from '../services/api';
+import { showToast } from '../components/shared/NotificationToast';
 import { SeverityBadge } from '../components/shared/SeverityBadge';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { CvssScore } from '../components/shared/CvssScore';
@@ -43,7 +44,11 @@ export function ScanDetailPage() {
     mutationFn: () => api.scans.delete(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scans'] });
+      showToast('success', 'Scan gelöscht');
       navigate('/scans');
+    },
+    onError: (err: Error) => {
+      showToast('error', 'Löschen fehlgeschlagen', err.message);
     },
   });
 
@@ -51,6 +56,10 @@ export function ScanDetailPage() {
     mutationFn: () => api.scans.cancel(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scan', id] });
+      showToast('success', 'Scan abgebrochen');
+    },
+    onError: (err: Error) => {
+      showToast('error', 'Abbrechen fehlgeschlagen', err.message);
     },
   });
 

@@ -89,6 +89,7 @@ async def mfa_login(body: MfaLoginRequest) -> dict:
     logger.info("MFA-Login erfolgreich", email=user["email"])
 
     from fastapi.responses import JSONResponse
+
     from src.api.cookie_auth import set_auth_cookies
     from src.shared.auth import generate_csrf_token
 

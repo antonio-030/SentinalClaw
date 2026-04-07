@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from src.api.cookie_auth import clear_auth_cookies, set_auth_cookies
 from src.shared.auth import (
     ROLES,
     UserRepository,
@@ -27,7 +28,6 @@ from src.shared.auth import (
     role_has_permission,
     verify_password,
 )
-from src.api.cookie_auth import clear_auth_cookies, set_auth_cookies
 from src.shared.logging_setup import get_logger
 from src.shared.token_blacklist import token_blacklist
 

@@ -1,9 +1,13 @@
 """Backup-Service für SentinelClaw.
 
-Erstellt sichere SQLite-Backups mittels VACUUM INTO (konsistent
-auch bei laufender Datenbank). Verwaltet Backup-Retention.
+Unterstützt beide Backends:
+- SQLite: Konsistentes Backup mittels VACUUM INTO
+- PostgreSQL: Backup mittels pg_dump Subprocess
+
+Verwaltet Backup-Retention und Wiederherstellung.
 """
 
+import asyncio
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,26 +23,60 @@ BACKUP_DIR = Path("data/backups")
 async def create_backup(db: DatabaseManager) -> Path:
     """Erstellt ein konsistentes Datenbank-Backup.
 
-    Verwendet SQLite VACUUM INTO für ein atomares, konsistentes Backup
-    auch bei laufenden Schreibvorgängen.
+    Wählt automatisch die richtige Methode je nach Backend:
+    - SQLite: VACUUM INTO (atomar, konsistent bei laufenden Schreibvorgängen)
+    - PostgreSQL: pg_dump (konsistentes logisches Backup)
 
     Returns:
         Pfad zur erstellten Backup-Datei.
     """
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    backup_path = BACKUP_DIR / f"sentinelclaw_{timestamp}.db"
 
+    if db.db_type == "postgresql":
+        return await _backup_postgresql(db, timestamp)
+    return await _backup_sqlite(db, timestamp)
+
+
+async def _backup_sqlite(db: DatabaseManager, timestamp: str) -> Path:
+    """SQLite-Backup via VACUUM INTO."""
+    backup_path = BACKUP_DIR / f"sentinelclaw_{timestamp}.db"
     conn = await db.get_connection()
     await conn.execute(f"VACUUM INTO '{backup_path}'")
 
     size_mb = backup_path.stat().st_size / (1024 * 1024)
-    logger.info(
-        "Backup erstellt",
-        path=str(backup_path),
-        size_mb=round(size_mb, 2),
+    logger.info("SQLite-Backup erstellt", path=str(backup_path), size_mb=round(size_mb, 2))
+    return backup_path
+
+
+async def _backup_postgresql(db: DatabaseManager, timestamp: str) -> Path:
+    """PostgreSQL-Backup via pg_dump."""
+    backup_path = BACKUP_DIR / f"sentinelclaw_{timestamp}.sql"
+
+    from src.shared.config import get_settings
+    settings = get_settings()
+
+    process = await asyncio.create_subprocess_exec(
+        "pg_dump",
+        "--host", settings.db_host,
+        "--port", str(settings.db_port),
+        "--username", settings.db_user,
+        "--dbname", settings.db_name,
+        "--no-password",
+        "--format", "plain",
+        "--file", str(backup_path),
+        env={"PGPASSWORD": settings.db_password},
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
+    _, stderr = await process.communicate()
+
+    if process.returncode != 0:
+        error_msg = stderr.decode().strip()
+        raise RuntimeError(f"pg_dump fehlgeschlagen: {error_msg}")
+
+    size_mb = backup_path.stat().st_size / (1024 * 1024)
+    logger.info("PostgreSQL-Backup erstellt", path=str(backup_path), size_mb=round(size_mb, 2))
     return backup_path
 
 
@@ -48,7 +86,7 @@ def list_backups() -> list[dict]:
         return []
 
     backups = []
-    for path in sorted(BACKUP_DIR.glob("sentinelclaw_*.db"), reverse=True):
+    for path in sorted(BACKUP_DIR.glob("sentinelclaw_*"), reverse=True):
         stat = path.stat()
         backups.append({
             "filename": path.name,
@@ -68,14 +106,47 @@ async def restore_backup(backup_filename: str, db: DatabaseManager) -> None:
     if not backup_path.exists():
         raise FileNotFoundError(f"Backup '{backup_filename}' nicht gefunden")
 
-    # Aktuelle DB-Datei ermitteln und ersetzen
+    if db.db_type == "postgresql":
+        await _restore_postgresql(backup_path, db)
+    else:
+        await _restore_sqlite(backup_path, db)
+
+
+async def _restore_sqlite(backup_path: Path, db: DatabaseManager) -> None:
+    """SQLite-Restore: Datei kopieren und DB neu initialisieren."""
     db_path = db._db_path
     await db.close()
-
     shutil.copy2(backup_path, db_path)
-    logger.info("Backup wiederhergestellt", backup=backup_filename)
+    logger.info("SQLite-Backup wiederhergestellt", backup=backup_path.name)
+    await db.initialize()
 
-    # DB neu initialisieren
+
+async def _restore_postgresql(backup_path: Path, db: DatabaseManager) -> None:
+    """PostgreSQL-Restore via psql."""
+    from src.shared.config import get_settings
+    settings = get_settings()
+
+    await db.close()
+
+    process = await asyncio.create_subprocess_exec(
+        "psql",
+        "--host", settings.db_host,
+        "--port", str(settings.db_port),
+        "--username", settings.db_user,
+        "--dbname", settings.db_name,
+        "--no-password",
+        "--file", str(backup_path),
+        env={"PGPASSWORD": settings.db_password},
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await process.communicate()
+
+    if process.returncode != 0:
+        error_msg = stderr.decode().strip()
+        raise RuntimeError(f"PostgreSQL-Restore fehlgeschlagen: {error_msg}")
+
+    logger.info("PostgreSQL-Backup wiederhergestellt", backup=backup_path.name)
     await db.initialize()
 
 
@@ -98,7 +169,7 @@ def cleanup_old_backups(max_age_days: int | None = None) -> int:
     cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
     deleted = 0
 
-    for path in BACKUP_DIR.glob("sentinelclaw_*.db"):
+    for path in BACKUP_DIR.glob("sentinelclaw_*"):
         mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
         if mtime < cutoff:
             path.unlink()

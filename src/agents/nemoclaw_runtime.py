@@ -11,90 +11,22 @@ Architektur:
 """
 
 import asyncio
-import shlex
 import shutil
+import time
 from uuid import uuid4
 
+from src.agents.nemoclaw_commands import (
+    build_cli_command,
+    build_ssh_command,
+    build_user_message,
+    push_ws_line_event,
+)
 from src.shared.config import get_settings
 from src.shared.kill_switch import KillSwitch
 from src.shared.logging_setup import get_logger
 from src.shared.types.agent_runtime import AgentResult, OpenClawConfig
 
 logger = get_logger(__name__)
-
-
-def _build_ssh_command(config: OpenClawConfig) -> list[str]:
-    """Baut den SSH-Befehl für die Verbindung zur OpenShell-Sandbox."""
-    proxy_cmd = (
-        f"openshell ssh-proxy "
-        f"--gateway-name {config.gateway_name} "
-        f"--name {config.sandbox_name}"
-    )
-    return [
-        "ssh",
-        "-o", f"ProxyCommand={proxy_cmd}",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "LogLevel=ERROR",
-        "-o", f"ConnectTimeout={config.ssh_timeout}",
-        f"sandbox@openshell-{config.sandbox_name}",
-    ]
-
-
-def _build_allowed_tools_pattern() -> str:
-    """Baut das Bash-Allowlist-Pattern für OpenClaw.
-
-    Liest die erlaubten Binaries aus den Settings (konfigurierbar über Web-UI).
-    Paketmanager werden IMMER aus der Liste entfernt, auch wenn jemand
-    sie in den Settings einträgt — Defense in Depth.
-    """
-    from src.shared.settings_service import get_setting_sync
-
-    # Erlaubte Binaries aus Settings laden (komma-getrennt)
-    configured = get_setting_sync(
-        "agent_allowed_binaries",
-        "curl,dig,whois,nmap,nuclei,python3,wget,jq",
-    )
-    allowed = {b.strip() for b in configured.split(",") if b.strip()}
-
-    # Blockierte Binaries aus Settings laden und ENTFERNEN
-    blocked_str = get_setting_sync(
-        "agent_blocked_binaries",
-        "pip,pip3,apt,apt-get,npm,yarn,brew,cargo,gem",
-    )
-    blocked = {b.strip() for b in blocked_str.split(",") if b.strip()}
-    allowed -= blocked
-
-    # Analyse-Utilities die der Agent immer braucht
-    allowed |= {"cat", "head", "tail", "grep", "ls", "wc", "sort"}
-
-    pattern = "|".join(sorted(allowed))
-    return pattern
-
-
-def _build_cli_command(
-    system_prompt: str,
-    user_message: str,
-) -> str:
-    """Baut den OpenClaw Agent-Befehl für die NemoClaw-Sandbox.
-
-    OpenClaw liest die Workspace-Dateien automatisch aus
-    /sandbox/.openclaw/workspace/ (per Docker-Volume gemountet).
-    Der LLM-Provider wird über den NemoClaw-Gateway konfiguriert.
-
-    SICHERHEIT: Bash ist auf eine Allowlist beschränkt.
-    Paketmanager (pip, apt, brew, npm) sind gesperrt.
-    """
-    escaped_message = shlex.quote(user_message)
-    allowed_pattern = _build_allowed_tools_pattern()
-
-    return (
-        f"cd /sandbox && "
-        f"claude --print "
-        f"--agent sentinelclaw "
-        f"--allowedTools 'Bash({allowed_pattern})' "
-        f"-p {escaped_message}"
-    )
 
 
 class NemoClawRuntime:
@@ -127,9 +59,9 @@ class NemoClawRuntime:
         if not session_id:
             session_id = f"sc-{uuid4().hex[:8]}"
 
-        full_message = _build_user_message(user_message, messages)
-        cli_cmd = _build_cli_command(system_prompt, full_message)
-        ssh_args = _build_ssh_command(self._config)
+        full_message = build_user_message(user_message, messages)
+        cli_cmd = build_cli_command(system_prompt, full_message)
+        ssh_args = build_ssh_command(self._config)
 
         logger.info(
             "NemoClaw Inference gestartet",
@@ -213,33 +145,7 @@ class NemoClawRuntime:
                 continue
 
             try:
-                # Tool-Erkennung: Bash-Befehle und deren Output
-                if line.startswith("$ ") or line.startswith("❯ "):
-                    await ws_manager.broadcast("agent_step", {
-                        "type": "tool_start",
-                        "tool": "bash",
-                        "command": line[2:][:200],
-                    })
-                elif line.startswith("✓") or line.startswith("✅"):
-                    await ws_manager.broadcast("agent_step", {
-                        "type": "tool_result",
-                        "tool": "bash",
-                        "success": True,
-                        "output_preview": line[:200],
-                    })
-                elif line.startswith("✗") or line.startswith("❌"):
-                    await ws_manager.broadcast("agent_step", {
-                        "type": "tool_result",
-                        "tool": "bash",
-                        "success": False,
-                        "output_preview": line[:200],
-                    })
-                elif len(lines) % 10 == 0:
-                    # Alle 10 Zeilen ein Thinking-Update
-                    await ws_manager.broadcast("agent_step", {
-                        "type": "thinking",
-                        "message": f"Agent arbeitet... ({len(lines)} Zeilen)",
-                    })
+                push_ws_line_event(ws_manager, line, len(lines))
             except Exception:
                 pass  # WS-Push Fehler ignorieren
 
@@ -262,7 +168,7 @@ class NemoClawRuntime:
 
     async def check_sandbox_status(self) -> dict:
         """Prüft den Status der OpenShell-Sandbox."""
-        ssh_args = _build_ssh_command(self._config)
+        ssh_args = build_ssh_command(self._config)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *ssh_args, "echo OK",
@@ -275,10 +181,39 @@ class NemoClawRuntime:
         except Exception as error:
             return {"status": "unreachable", "error": str(error)}
 
-    @staticmethod
-    def check_availability() -> dict:
-        """Prüft ob die NemoClaw/OpenShell-Infrastruktur verfügbar ist."""
-        result: dict = {"available": False, "reason": "", "details": {}}
+    # Cache für Verfügbarkeitsprüfung (Klassen-Variablen)
+    _availability_cache: dict | None = None
+    _availability_cache_timestamp: float = 0.0
+    _AVAILABILITY_CACHE_TTL: float = 30.0  # Sekunden
+
+    @classmethod
+    def check_availability(cls) -> dict:
+        """Prüft ob die NemoClaw/OpenShell-Infrastruktur verfügbar ist.
+
+        Ergebnis wird für 30 Sekunden gecacht um wiederholte
+        Aufrufe (Health-Checks, Status-Endpoint) performant zu halten.
+        """
+        now = time.monotonic()
+        if (
+            cls._availability_cache is not None
+            and (now - cls._availability_cache_timestamp) < cls._AVAILABILITY_CACHE_TTL
+        ):
+            return cls._availability_cache
+
+        result = cls._run_availability_checks()
+        cls._availability_cache = result
+        cls._availability_cache_timestamp = now
+        return result
+
+    @classmethod
+    def _run_availability_checks(cls) -> dict:
+        """Führt die eigentlichen Verfügbarkeitsprüfungen durch."""
+        result: dict = {
+            "available": False,
+            "reason": "",
+            "details": {},
+            "last_check": time.time(),
+        }
 
         # 1. openshell CLI vorhanden?
         openshell_path = shutil.which("openshell")
@@ -288,6 +223,7 @@ class NemoClawRuntime:
                 "openshell CLI nicht installiert. "
                 "Installiere NemoClaw: pip install nemoclaw"
             )
+            logger.debug("NemoClaw: openshell Binary nicht gefunden")
             return result
 
         # 2. OpenClaw Agent-Runtime vorhanden? (claude im Agent-Modus)
@@ -298,28 +234,60 @@ class NemoClawRuntime:
                 "OpenClaw Runtime (claude) nicht installiert. "
                 "Wird über NemoClaw bereitgestellt."
             )
+            logger.debug("NemoClaw: claude Binary nicht gefunden")
+            return result
+
+        # 3. SSH-Konnektivität testen (echo-Ping mit Timeout)
+        ssh_ok, ssh_error = cls._test_ssh_connectivity()
+        result["details"]["ssh_connectivity"] = ssh_ok
+        if not ssh_ok:
+            result["reason"] = f"SSH-Verbindung fehlgeschlagen: {ssh_error}"
+            logger.warning(
+                "NemoClaw: SSH-Konnektivitätstest fehlgeschlagen",
+                error=ssh_error,
+            )
             return result
 
         result["available"] = True
         result["reason"] = "Bereit"
+        logger.debug("NemoClaw: Verfügbarkeitsprüfung erfolgreich")
         return result
+
+    @staticmethod
+    def _test_ssh_connectivity() -> tuple[bool, str]:
+        """Testet SSH-Konnektivität via openshell ssh-proxy echo.
+
+        Synchroner Subprocess-Aufruf mit 5 Sekunden Timeout.
+        Gibt (True, '') bei Erfolg oder (False, Fehlerbeschreibung) zurück.
+        """
+        import subprocess
+
+        try:
+            completed = subprocess.run(
+                ["openshell", "ssh-proxy", "echo", "ok"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if completed.returncode == 0 and "ok" in completed.stdout:
+                return True, ""
+
+            # Fehlermeldung aus stderr oder Returncode ableiten
+            stderr = completed.stderr.strip()[:200]
+            if "connection refused" in stderr.lower():
+                return False, "Verbindung abgelehnt (Gateway nicht erreichbar)"
+            if "timeout" in stderr.lower():
+                return False, "SSH-Timeout (Gateway antwortet nicht)"
+            return False, stderr or f"Exit-Code {completed.returncode}"
+
+        except subprocess.TimeoutExpired:
+            return False, "SSH-Timeout nach 5 Sekunden"
+        except FileNotFoundError:
+            return False, "openshell Binary nicht ausführbar"
+        except OSError as error:
+            return False, f"OS-Fehler: {error}"
 
     @property
     def is_openclaw_native(self) -> bool:
         """Echte NemoClaw/OpenShell Integration."""
         return True
-
-
-def _build_user_message(
-    current_message: str, messages: list[dict[str, str]] | None,
-) -> str:
-    """Baut User-Nachricht mit optionaler Chat-History als Kontext-Block."""
-    if not messages:
-        return current_message
-    parts = []
-    for msg in messages[:-1]:
-        role = "User" if msg["role"] == "user" else "Agent"
-        parts.append(f"[{role}]: {msg['content']}")
-    if not parts:
-        return current_message
-    return f"[Chat-Verlauf]\n{chr(10).join(parts)}\n\n[Nachricht]\n{current_message}"

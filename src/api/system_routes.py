@@ -26,6 +26,14 @@ class KillRequest(BaseModel):
     reason: str = Field(default="API Kill-Request")
 
 
+class NemoClawHealthStatus(BaseModel):
+    """NemoClaw-Verfügbarkeitsstatus im Health-Check."""
+    available: bool
+    provider: str
+    last_check: str
+    reason: str = ""
+
+
 class HealthResponse(BaseModel):
     """System-Health-Status."""
     status: str
@@ -33,6 +41,7 @@ class HealthResponse(BaseModel):
     provider: str
     sandbox_running: bool
     db_connected: bool
+    nemoclaw: NemoClawHealthStatus
     timestamp: str
 
 
@@ -61,9 +70,22 @@ def _check_sandbox_status() -> bool:
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """System-Health-Check — wird von Docker Healthcheck genutzt."""
+    from src.agents.chat_agent import get_active_provider_name
+    from src.agents.nemoclaw_runtime import NemoClawRuntime
     from src.shared.config import get_settings
+
     settings = get_settings()
     db = await _get_db()
+
+    # NemoClaw-Verfügbarkeit prüfen (gecacht, 30s TTL)
+    nemoclaw_status = NemoClawRuntime.check_availability()
+    nemoclaw_available = nemoclaw_status.get("available", False)
+    last_check_ts = nemoclaw_status.get("last_check", 0)
+    last_check_iso = (
+        datetime.fromtimestamp(last_check_ts, tz=UTC).isoformat()
+        if last_check_ts
+        else datetime.now(UTC).isoformat()
+    )
 
     return HealthResponse(
         status="ok" if db is not None else "degraded",
@@ -71,6 +93,12 @@ async def health_check() -> HealthResponse:
         provider=settings.llm_provider,
         sandbox_running=_check_sandbox_status(),
         db_connected=db is not None,
+        nemoclaw=NemoClawHealthStatus(
+            available=nemoclaw_available,
+            provider=get_active_provider_name(),
+            last_check=last_check_iso,
+            reason=nemoclaw_status.get("reason", ""),
+        ),
         timestamp=datetime.now(UTC).isoformat(),
     )
 
@@ -203,6 +231,7 @@ async def list_audit_logs(request: Request, limit: int = 50, action: str | None 
 async def system_status() -> dict:
     """Gibt den System-Status zurück."""
     import shutil
+
     from src.shared.config import get_settings
     from src.shared.kill_switch import KillSwitch
     from src.shared.repositories import ScanJobRepository
@@ -224,10 +253,10 @@ async def system_status() -> dict:
 
     try:
         from src.agents.nemoclaw_runtime import NemoClawRuntime
-        runtime = NemoClawRuntime()
-        status = await runtime.check_sandbox_status()
-        nemoclaw_available = status.get("status") != "unreachable"
-        nemoclaw_version = status.get("version", "")
+        # Gecachte Verfügbarkeitsprüfung nutzen (30s TTL)
+        availability = NemoClawRuntime.check_availability()
+        nemoclaw_available = availability.get("available", False)
+        nemoclaw_version = "Aktiv" if nemoclaw_available else ""
     except Exception:
         pass
 

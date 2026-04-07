@@ -184,6 +184,10 @@ _SEED_DEFINITIONS: list[dict] = [
      "category": "watchdog", "value_type": "string",
      "label": "Health-Check URL",
      "description": "URL die der Watchdog regelmäßig prüft"},
+    {"key": "watchdog_webhook_url", "value": "",
+     "category": "watchdog", "value_type": "string",
+     "label": "Webhook-URL für Kill-Benachrichtigung",
+     "description": "POST-Endpoint der bei Kill-Switch-Aktivierung benachrichtigt wird (leer = deaktiviert)"},
     # --- Backup ---
     {"key": "backup_retention_days", "value": "30",
      "category": "backup", "value_type": "int",

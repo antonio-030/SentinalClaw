@@ -16,12 +16,11 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.shared.auth import decode_token, require_role
+from src.shared.auth import decode_token
 from src.shared.config import get_settings
 from src.shared.database import DatabaseManager
 from src.shared.logging_setup import get_logger, setup_logging
@@ -85,7 +84,11 @@ async def get_db() -> DatabaseManager:
     global _db
     if _db is None:
         settings = get_settings()
-        _db = DatabaseManager(settings.db_path)
+        _db = DatabaseManager(
+            db_path=settings.db_path,
+            db_type=settings.db_type,
+            db_dsn=settings.get_db_dsn() if settings.db_type == "postgresql" else "",
+        )
         await _db.initialize()
     return _db
 
@@ -97,7 +100,11 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    _db = DatabaseManager(settings.db_path)
+    _db = DatabaseManager(
+        db_path=settings.db_path,
+        db_type=settings.db_type,
+        db_dsn=settings.get_db_dsn() if settings.db_type == "postgresql" else "",
+    )
     await _db.initialize()
 
     # Schema-Migrationen ausführen (nach initialize, vor Seed-Daten)
@@ -151,6 +158,9 @@ async def lifespan(app: FastAPI):
     # Sandbox-Container starten falls gestoppt
     await _ensure_sandbox_running()
 
+    # NemoClaw-Verfügbarkeit beim Start prüfen (kein Blocker)
+    _check_nemoclaw_on_startup()
+
     logger.info("API-Server gestartet", port=settings.mcp_port)
 
     yield
@@ -198,8 +208,8 @@ if _init_settings.debug:
 # HTTP-Methoden die den Serverzustand ändern — CSRF-Schutz erforderlich
 _STATE_CHANGING_METHODS: set[str] = {"POST", "PUT", "DELETE", "PATCH"}
 
-from src.shared.token_blacklist import token_blacklist  # noqa: E402
 from src.shared.auth import SESSION_INACTIVITY_MINUTES  # noqa: E402
+from src.shared.token_blacklist import token_blacklist  # noqa: E402
 
 # In-Memory: Letzte Aktivität pro Session (jti → Zeitstempel)
 _session_activity: dict[str, float] = {}
@@ -293,19 +303,19 @@ app.add_middleware(RateLimitMiddleware)
 from src.api.agent_tool_routes import router as agent_tool_router  # noqa: E402
 from src.api.approval_routes import router as approval_router  # noqa: E402
 from src.api.auth_routes import router as auth_router  # noqa: E402
+from src.api.backup_routes import router as backup_router  # noqa: E402
 from src.api.chat_routes import router as chat_router  # noqa: E402
 from src.api.finding_routes import router as finding_router  # noqa: E402
+from src.api.gdpr_routes import router as gdpr_router  # noqa: E402
 from src.api.kill_verification_routes import router as kill_verify_router  # noqa: E402
+from src.api.metrics_routes import router as metrics_router  # noqa: E402
 from src.api.mfa_routes import router as mfa_router  # noqa: E402
+from src.api.org_routes import router as org_router  # noqa: E402
 from src.api.scan_detail_routes import router as scan_detail_router  # noqa: E402
 from src.api.scan_routes import router as scan_router  # noqa: E402
 from src.api.settings_routes import router as settings_router  # noqa: E402
-from src.api.whitelist_routes import router as whitelist_router  # noqa: E402
-from src.api.gdpr_routes import router as gdpr_router  # noqa: E402
-from src.api.backup_routes import router as backup_router  # noqa: E402
 from src.api.system_routes import router as system_router  # noqa: E402
-from src.api.metrics_routes import router as metrics_router  # noqa: E402
-from src.api.org_routes import router as org_router  # noqa: E402
+from src.api.whitelist_routes import router as whitelist_router  # noqa: E402
 from src.api.workspace_routes import router as workspace_router  # noqa: E402
 
 app.include_router(auth_router)
@@ -363,6 +373,36 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 await websocket.send_text('{"event":"pong"}')
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, user_id)
+
+
+# ─── NemoClaw Startup-Check ──────────────────────────────────────
+
+
+def _check_nemoclaw_on_startup() -> None:
+    """Prüft NemoClaw-Verfügbarkeit beim Server-Start.
+
+    Loggt eine Warnung wenn NemoClaw nicht erreichbar ist.
+    Blockiert den Start NICHT — Graceful Degradation greift zur Laufzeit.
+    """
+    try:
+        from src.agents.nemoclaw_runtime import NemoClawRuntime
+        status = NemoClawRuntime.check_availability()
+        if status.get("available", False):
+            logger.info(
+                "NemoClaw verfügbar",
+                details=status.get("details", {}),
+            )
+        else:
+            logger.warning(
+                "NemoClaw beim Start NICHT verfügbar — Fallback-Provider wird bei Bedarf genutzt",
+                reason=status.get("reason", "unbekannt"),
+                details=status.get("details", {}),
+            )
+    except Exception as error:
+        logger.warning(
+            "NemoClaw Startup-Check fehlgeschlagen",
+            error=str(error),
+        )
 
 
 # ─── Auto-Start: Sandbox beim Server-Start sicherstellen ─────────

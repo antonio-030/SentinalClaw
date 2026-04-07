@@ -208,10 +208,43 @@ class Settings(BaseSettings):
     )
 
     # --- Datenbank ---
+    db_type: Literal["sqlite", "postgresql"] = Field(
+        default="sqlite",
+        description="Datenbank-Backend: sqlite (PoC) oder postgresql (Produktion)",
+    )
     db_path: Path = Field(
         default=Path("data/sentinelclaw.db"),
-        description="Pfad zur SQLite-Datenbank (PoC)",
+        description="Pfad zur SQLite-Datenbank (nur bei db_type=sqlite)",
     )
+    db_host: str = Field(
+        default="localhost",
+        description="PostgreSQL-Host (nur bei db_type=postgresql)",
+    )
+    db_port: int = Field(
+        default=5432,
+        ge=1,
+        le=65535,
+        description="PostgreSQL-Port",
+    )
+    db_name: str = Field(
+        default="sentinelclaw",
+        description="PostgreSQL-Datenbankname",
+    )
+    db_user: str = Field(
+        default="sentinel",
+        description="PostgreSQL-Benutzer",
+    )
+    db_password: str = Field(
+        default="",
+        description="PostgreSQL-Passwort",
+    )
+
+    def get_db_dsn(self) -> str:
+        """Erstellt den PostgreSQL-Connection-String."""
+        return (
+            f"postgresql://{self.db_user}:{self.db_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
 
     @field_validator("allowed_targets")
     @classmethod

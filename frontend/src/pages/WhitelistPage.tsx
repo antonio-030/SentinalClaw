@@ -1,7 +1,7 @@
 // ── Whitelist — Autorisierte Scan-Ziele verwalten ────────────────────
 
 import { useState } from 'react';
-import { ShieldCheck, Plus, Trash2, AlertTriangle, Network } from 'lucide-react';
+import { ShieldCheck, Plus, Trash2, AlertTriangle, Network, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useWhitelist, useAuthorizeTarget, useRevokeTarget } from '../hooks/useApi';
 import { showToast } from '../components/shared/NotificationToast';
@@ -9,7 +9,7 @@ import { LoadingSpinner } from '../components/shared/LoadingSpinner';
 import { api } from '../services/api';
 
 export function WhitelistPage() {
-  const { data: targets, isLoading } = useWhitelist();
+  const { data: targets, isLoading, isError, error, refetch } = useWhitelist();
   const { data: policy } = useQuery({
     queryKey: ['policy'],
     queryFn: api.whitelist.policy,
@@ -46,6 +46,26 @@ export function WhitelistPage() {
     } catch (err) {
       showToast('error', 'Fehler', err instanceof Error ? err.message : 'Unbekannter Fehler');
     }
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-severity-critical/10 mb-4">
+          <AlertCircle className="h-6 w-6 text-severity-critical" />
+        </div>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Fehler beim Laden</h2>
+        <p className="text-xs text-text-tertiary max-w-sm mb-4">
+          {(error as Error | null)?.message || 'Unbekannter Fehler'}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent/10 border border-accent/30 px-3.5 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          Erneut versuchen
+        </button>
+      </div>
+    );
   }
 
   return (
