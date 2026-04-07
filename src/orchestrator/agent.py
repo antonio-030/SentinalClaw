@@ -4,14 +4,19 @@ Orchestrator-Agent — Koordiniert den gesamten Scan-Ablauf.
 Erstellt einen Ausführungsplan mit mindestens 2 Phasen,
 delegiert an den Recon-Agent und erstellt eine Gesamtbewertung.
 Entspricht FA-01 im Lastenheft.
+
+Phasenausführung ist in phase_executor.py ausgelagert.
 """
 
 import time
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from src.agents.nemoclaw_runtime import NemoClawRuntime
-from src.agents.recon.result_types import ReconResult
+from src.orchestrator.phase_executor import (
+    check_escalation_approval,
+    execute_scan_phases,
+    handle_scan_failure,
+)
 from src.orchestrator.result_types import OrchestratorResult, ScanPhase
 from src.shared.config import get_settings
 from src.shared.database import DatabaseManager
@@ -39,6 +44,7 @@ class OrchestratorAgent:
         self._db = db
         self._scan_repo: ScanJobRepository | None = None
         self._audit_repo: AuditLogRepository | None = None
+        self._finding_repo: FindingRepository | None = None
         self._owns_db = db is None  # Nur schließen wenn selbst erstellt
 
     async def _ensure_db(self) -> None:
@@ -62,12 +68,6 @@ class OrchestratorAgent:
 
         existing_scan_id: Wenn gesetzt, wird kein neuer Job erstellt
         sondern der bestehende genutzt (z.B. aus Chat oder API).
-
-        1. Erstellt Scan-Job in DB (oder nutzt bestehenden)
-        2. Plant den Scan (mindestens 2 Phasen)
-        3. Führt den Scan über NemoClaw-Runtime aus
-        4. Analysiert Ergebnisse und erstellt Bericht
-        5. Speichert alles in DB + Audit-Log
         """
         await self._ensure_db()
         start_time = time.monotonic()
@@ -75,22 +75,75 @@ class OrchestratorAgent:
 
         logger.info(
             "Orchestrator startet",
-            scan_id=scan_id,
-            target=target,
-            scan_type=scan_type,
+            scan_id=scan_id, target=target, scan_type=scan_type,
         )
 
-        # Scan-Plan erstellen (FA-01: mindestens 2 Phasen)
         plan = self._create_scan_plan(target, scan_type, ports)
-
         result = OrchestratorResult(
-            scan_id=scan_id,
-            target=target,
-            scan_type=scan_type,
-            plan=plan,
+            scan_id=scan_id, target=target, scan_type=scan_type, plan=plan,
         )
 
-        # Scan-Job: Bestehenden nutzen oder neuen erstellen
+        job = await self._resolve_or_create_job(
+            target, scan_type, ports, existing_scan_id, plan,
+        )
+        await self._log_scan_started(job, target, scan_type, plan, scan_id)
+
+        await self._run_scan_with_error_handling(
+            target, ports, plan, job, result, start_time,
+        )
+        return result
+
+    async def _log_scan_started(
+        self, job: ScanJob, target: str, scan_type: str,
+        plan: list[ScanPhase], scan_id: str,
+    ) -> None:
+        """Erstellt den Audit-Log-Eintrag für den Scan-Start."""
+        await self._audit_repo.create(AuditLogEntry(
+            action="scan.started",
+            resource_type="scan_job",
+            resource_id=str(job.id),
+            details={
+                "target": target,
+                "scan_type": scan_type,
+                "plan_phases": len(plan),
+                "orchestrator_scan_id": scan_id,
+            },
+            triggered_by="orchestrator",
+        ))
+
+    async def _run_scan_with_error_handling(
+        self, target: str, ports: str, plan: list[ScanPhase],
+        job: ScanJob, result: OrchestratorResult, start_time: float,
+    ) -> None:
+        """Führt den Scan aus — mit Approval-Prüfung und Fehlerbehandlung."""
+        try:
+            approved = await check_escalation_approval(
+                self._db, self._scan_repo, job, self._scope, target, result,
+            )
+            if not approved:
+                return
+
+            await execute_scan_phases(
+                target=target, ports=ports, plan=plan, scope=self._scope,
+                job=job, runtime=self._runtime, db=self._db, result=result,
+                scan_repo=self._scan_repo, audit_repo=self._audit_repo,
+                finding_repo=self._finding_repo, start_time=start_time,
+            )
+        except Exception as error:
+            await handle_scan_failure(
+                error, plan, job, result,
+                self._scan_repo, self._audit_repo, start_time,
+            )
+
+    async def _resolve_or_create_job(
+        self,
+        target: str,
+        scan_type: str,
+        ports: str,
+        existing_scan_id: str | None,
+        plan: list[ScanPhase],
+    ) -> ScanJob:
+        """Löst einen bestehenden Scan-Job auf oder erstellt einen neuen."""
         if existing_scan_id:
             from uuid import UUID as _UUID
             job = await self._scan_repo.get_by_id(_UUID(existing_scan_id))
@@ -107,185 +160,7 @@ class OrchestratorAgent:
             )
             await self._scan_repo.create(job)
             await self._scan_repo.update_status(job.id, ScanStatus.RUNNING)
-
-        # Audit-Log: Scan gestartet
-        await self._audit_repo.create(AuditLogEntry(
-            action="scan.started",
-            resource_type="scan_job",
-            resource_id=str(job.id),
-            details={
-                "target": target,
-                "scan_type": scan_type,
-                "plan_phases": len(plan),
-                "orchestrator_scan_id": scan_id,
-            },
-            triggered_by="orchestrator",
-        ))
-
-        try:
-            # Approval-Prüfung für Stufe 3+ (Exploitation, Post-Exploitation)
-            if self._scope.max_escalation_level >= 3:
-                from src.shared.approval_service import check_and_request_approval
-
-                approved = await check_and_request_approval(
-                    db=self._db,
-                    scan_job_id=str(job.id),
-                    tool_name=f"scan_level_{self._scope.max_escalation_level}",
-                    target=target,
-                    escalation_level=self._scope.max_escalation_level,
-                    max_allowed_level=self._scope.max_escalation_level,
-                )
-                if not approved:
-                    logger.warning(
-                        "Scan abgelehnt — Eskalation nicht genehmigt",
-                        target=target, level=self._scope.max_escalation_level,
-                    )
-                    await self._scan_repo.update_status(job.id, ScanStatus.FAILED)
-                    result.executive_summary = (
-                        "Scan abgebrochen: Eskalationsgenehmigung wurde abgelehnt oder "
-                        "ist abgelaufen. Starten Sie den Scan mit niedrigerer Stufe "
-                        "oder holen Sie die Genehmigung ein."
-                    )
-                    return result
-
-            # Multi-Phase Scan ausführen (3 separate Agent-Aufrufe)
-            from src.orchestrator.multi_phase import run_multi_phase_scan
-
-            for phase in plan:
-                phase.status = "running"
-
-            recon_result = await run_multi_phase_scan(
-                target=target,
-                ports=ports,
-                allowed_targets=self._scope.targets_include,
-                max_escalation_level=self._scope.max_escalation_level,
-                scan_job_id=job.id,
-                db=self._db,
-                runtime=self._runtime,
-            )
-
-            # Phasen als abgeschlossen markieren
-            for phase in plan:
-                phase.status = "completed"
-
-            result.recon_result = recon_result
-            result.full_report = recon_result.agent_summary
-            result.total_tokens_used = recon_result.total_tokens_used
-
-            # Findings in DB persistieren
-            await self._persist_findings(job.id, recon_result)
-
-            # Executive Summary erstellen
-            result.executive_summary = self._create_executive_summary(recon_result)
-            result.risk_assessment = self._create_risk_assessment(recon_result)
-            result.recommendations = self._create_recommendations(recon_result)
-
-            # Scan erfolgreich abgeschlossen
-            duration = time.monotonic() - start_time
-            result.total_duration_seconds = duration
-            result.completed_at = datetime.now(UTC)
-
-            await self._scan_repo.update_status(
-                job.id, ScanStatus.COMPLETED, tokens_used=recon_result.total_tokens_used
-            )
-
-            await self._audit_repo.create(AuditLogEntry(
-                action="scan.completed",
-                resource_type="scan_job",
-                resource_id=str(job.id),
-                details={
-                    "hosts": recon_result.total_hosts,
-                    "open_ports": recon_result.total_open_ports,
-                    "vulnerabilities": recon_result.total_vulnerabilities,
-                    "duration_s": round(duration, 1),
-                    "tokens": recon_result.total_tokens_used,
-                },
-                triggered_by="orchestrator",
-            ))
-
-            logger.info(
-                "Orchestrator abgeschlossen",
-                scan_id=scan_id,
-                phases=result.phases_completed,
-                hosts=recon_result.total_hosts,
-                ports=recon_result.total_open_ports,
-                vulns=recon_result.total_vulnerabilities,
-                duration_s=round(duration, 1),
-            )
-
-        except Exception as error:
-            duration = time.monotonic() - start_time
-            result.total_duration_seconds = duration
-
-            for phase in plan:
-                if phase.status == "running":
-                    phase.status = "failed"
-                    phase.error = str(error)
-
-            await self._scan_repo.update_status(job.id, ScanStatus.FAILED)
-
-            await self._audit_repo.create(AuditLogEntry(
-                action="scan.failed",
-                resource_type="scan_job",
-                resource_id=str(job.id),
-                details={"error": str(error)[:500], "duration_s": round(duration, 1)},
-                triggered_by="orchestrator",
-            ))
-
-            logger.error(
-                "Orchestrator fehlgeschlagen",
-                scan_id=scan_id,
-                error=str(error),
-                duration_s=round(duration, 1),
-            )
-
-        return result
-
-    async def _persist_findings(self, job_id, recon_result: ReconResult) -> None:
-        """Speichert alle Findings aus dem Recon-Ergebnis in die Datenbank."""
-        from src.shared.types.models import Finding, Severity
-
-        severity_map = {
-            "critical": Severity.CRITICAL,
-            "high": Severity.HIGH,
-            "medium": Severity.MEDIUM,
-            "low": Severity.LOW,
-            "info": Severity.INFO,
-        }
-
-        for vuln in recon_result.vulnerabilities:
-            finding = Finding(
-                scan_job_id=job_id,
-                tool_name="recon-agent",
-                title=vuln.title,
-                severity=severity_map.get(vuln.severity, Severity.INFO),
-                cvss_score=vuln.cvss_score,
-                cve_id=vuln.cve_id,
-                target_host=vuln.host or recon_result.target,
-                target_port=vuln.port,
-                description=vuln.description,
-                recommendation=vuln.recommendation,
-            )
-            await self._finding_repo.create(finding)
-
-        # Audit-Log: Findings persistiert
-        if recon_result.vulnerabilities:
-            await self._audit_repo.create(AuditLogEntry(
-                action="findings.persisted",
-                resource_type="scan_job",
-                resource_id=str(job_id),
-                details={
-                    "count": len(recon_result.vulnerabilities),
-                    "severity_counts": recon_result.severity_counts,
-                },
-                triggered_by="orchestrator",
-            ))
-
-            logger.info(
-                "Findings in DB gespeichert",
-                count=len(recon_result.vulnerabilities),
-                severities=recon_result.severity_counts,
-            )
+        return job
 
     def _create_scan_plan(
         self, target: str, scan_type: str, ports: str
@@ -309,24 +184,6 @@ class OrchestratorAgent:
             ))
 
         return plan
-
-    def _create_executive_summary(self, recon: ReconResult) -> str:
-        """Delegiert an assessment-Modul."""
-        from src.orchestrator.assessment import create_executive_summary
-
-        return create_executive_summary(recon)
-
-    def _create_risk_assessment(self, recon: ReconResult) -> str:
-        """Delegiert an assessment-Modul."""
-        from src.orchestrator.assessment import create_risk_assessment
-
-        return create_risk_assessment(recon)
-
-    def _create_recommendations(self, recon: ReconResult) -> list[str]:
-        """Delegiert an assessment-Modul."""
-        from src.orchestrator.assessment import create_recommendations
-
-        return create_recommendations(recon)
 
     async def close(self) -> None:
         """Schließt die DB-Verbindung nur wenn selbst erstellt."""

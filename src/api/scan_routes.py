@@ -8,15 +8,24 @@ Enthaelt die grundlegenden CRUD-Endpoints unter /api/v1/scans:
   - DELETE /scans/{id}  -> Scan loeschen
   - PUT    /scans/{id}/cancel -> Scan abbrechen
 
+Validierungslogik und Background-Ausfuehrung liegen in scan_validation.py.
 Sub-Ressourcen (Export, Report, Vergleich, Hosts, Ports, Phasen)
 liegen in scan_detail_routes.py.
 """
 
-from uuid import UUID
+import asyncio
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from src.api.scan_validation import (
+    check_security_layers,
+    create_scan_job_with_audit,
+    parse_scan_uuid,
+    resolve_scan_profile,
+    run_scan_background,
+    validate_scan_target,
+)
 from src.shared.auth import require_role
 from src.shared.logging_setup import get_logger
 
@@ -63,111 +72,35 @@ async def _get_db():
 async def start_scan(request: Request, body: ScanRequest) -> ScanResponse:
     """Startet einen neuen Scan (analyst+)."""
     caller = require_role(request, "analyst")
+    target = validate_scan_target(body.target)
+    await check_security_layers()
 
-    # Target validieren — leere Strings und Whitespace-only ablehnen
-    target = body.target.strip()
-    if not target:
-        raise HTTPException(400, "Scan-Ziel darf nicht leer sein")
+    # Profil laden oder Defaults verwenden
+    ports, escalation = resolve_scan_profile(
+        body.profile, body.ports, body.max_escalation_level
+    )
 
-    # Alle Sicherheitsschichten müssen aktiv sein — kein Scan ohne volle Absicherung
-    from src.shared.security_layer_check import check_all_security_layers
-
-    all_layers_ok, layer_errors = await check_all_security_layers()
-    if not all_layers_ok:
-        raise HTTPException(
-            503,
-            "Scan blockiert — nicht alle Sicherheitsschichten aktiv: "
-            + "; ".join(layer_errors),
-        )
-
-    from src.shared.repositories import AuditLogRepository, ScanJobRepository
-    from src.shared.types.models import AuditLogEntry, ScanJob
-
+    # Scan-Job erstellen und Audit-Log schreiben
     db = await _get_db()
-    scan_repo = ScanJobRepository(db)
-    audit_repo = AuditLogRepository(db)
-
-    # Profil laden wenn angegeben
-    ports = body.ports
-    escalation = body.max_escalation_level
-    if body.profile:
-        from src.shared.scan_profiles import get_profile
-        profile = get_profile(body.profile)
-        ports = profile.ports
-        escalation = profile.max_escalation_level
-
-    # Scan-Job erstellen
-    job = ScanJob(
-        target=body.target,
+    scan_id = await create_scan_job_with_audit(
+        db=db,
+        target=target,
         scan_type=body.scan_type,
-        max_escalation_level=escalation,
-        config={"ports": ports, "profile": body.profile},
+        escalation=escalation,
+        ports=ports,
+        profile_name=body.profile,
+        caller_email=caller.get("email", "api"),
     )
-    await scan_repo.create(job)
 
-    # Audit-Log schreiben
-    await audit_repo.create(AuditLogEntry(
-        action="scan.created",
-        resource_type="scan_job",
-        resource_id=str(job.id),
-        details={"target": body.target, "ports": ports},
-        triggered_by=caller.get("email", "api"),
-    ))
-
-    # Scan asynchron starten (Background-Task)
-    import asyncio
-    asyncio.create_task(
-        _run_scan_background(str(job.id), body.target, ports, escalation)
-    )
+    # Scan asynchron im Hintergrund starten
+    asyncio.create_task(run_scan_background(scan_id, target, ports, escalation))
 
     return ScanResponse(
-        scan_id=str(job.id),
+        scan_id=scan_id,
         target=body.target,
         status="started",
         message=f"Scan gestartet auf {body.target} (Ports: {ports})",
     )
-
-
-async def _run_scan_background(
-    scan_id: str, target: str, ports: str, escalation: int
-) -> None:
-    """Fuehrt den Scan im Hintergrund aus.
-
-    Nutzt eine EIGENE DB-Connection um Locks mit der API zu vermeiden.
-    SQLite kann nur einen Writer gleichzeitig — die API-Requests (Polling)
-    und der Scan duerfen sich nicht gegenseitig blockieren.
-    """
-    from uuid import UUID as _UUID
-
-    from src.orchestrator.agent import OrchestratorAgent
-    from src.shared.repositories import ScanJobRepository
-    from src.shared.types.models import ScanStatus
-    from src.shared.types.scope import PentestScope
-
-    # Gemeinsame DB-Connection von der API nutzen (WAL-Modus erlaubt parallele Reads)
-    try:
-        db = await _get_db()
-        scan_repo = ScanJobRepository(db)
-        await scan_repo.update_status(_UUID(scan_id), ScanStatus.RUNNING)
-
-        scope = PentestScope(
-            targets_include=[target],
-            max_escalation_level=escalation,
-            ports_include=ports,
-        )
-
-        # Orchestrator bekommt die gleiche DB-Connection
-        orchestrator = OrchestratorAgent(scope=scope, db=db)
-        await orchestrator.orchestrate_scan(target, ports=ports, existing_scan_id=scan_id)
-
-    except Exception as error:
-        logger.error("Background-Scan fehlgeschlagen", scan_id=scan_id, error=str(error))
-        try:
-            db = await _get_db()
-            repo = ScanJobRepository(db)
-            await repo.update_status(_UUID(scan_id), ScanStatus.FAILED)
-        except Exception:
-            pass
 
 
 @router.get("")
@@ -200,10 +133,7 @@ async def get_scan(scan_id: str) -> dict:
     from src.shared.phase_repositories import OpenPortRepository, ScanPhaseRepository
     from src.shared.repositories import FindingRepository, ScanJobRepository
 
-    try:
-        scan_uuid = UUID(scan_id)
-    except ValueError:
-        raise HTTPException(400, f"Ungueltige Scan-ID: {scan_id}")
+    scan_uuid = parse_scan_uuid(scan_id)
 
     db = await _get_db()
     scan_repo = ScanJobRepository(db)
@@ -252,10 +182,7 @@ async def delete_scan(scan_id: str, request: Request) -> dict:
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
     from src.shared.types.models import AuditLogEntry
 
-    try:
-        scan_uuid = UUID(scan_id)
-    except ValueError:
-        raise HTTPException(400, f"Ungueltige Scan-ID: {scan_id}")
+    scan_uuid = parse_scan_uuid(scan_id)
 
     db = await _get_db()
     scan_repo = ScanJobRepository(db)
@@ -288,10 +215,7 @@ async def cancel_scan(scan_id: str, request: Request) -> dict:
     from src.shared.repositories import AuditLogRepository, ScanJobRepository
     from src.shared.types.models import AuditLogEntry, ScanStatus
 
-    try:
-        scan_uuid = UUID(scan_id)
-    except ValueError:
-        raise HTTPException(400, f"Ungueltige Scan-ID: {scan_id}")
+    scan_uuid = parse_scan_uuid(scan_id)
 
     db = await _get_db()
     scan_repo = ScanJobRepository(db)

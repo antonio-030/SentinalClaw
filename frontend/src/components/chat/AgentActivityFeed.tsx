@@ -23,7 +23,7 @@ interface AgentActivityFeedProps {
 
 // ── Log-Zeile im Terminal-Style ─────────────────────────────────────
 
-function LogLine({ step, index }: { step: AgentStep; index: number }) {
+function LogLine({ step }: { step: AgentStep }) {
   const time = new Date().toLocaleTimeString('de-DE', {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
@@ -116,7 +116,7 @@ export function AgentActivityFeed({ steps, elapsedSeconds }: AgentActivityFeedPr
             </div>
           )}
           {visibleSteps.map((step, i) => (
-            <LogLine key={`${step.type}-${i}`} step={step} index={i} />
+            <LogLine key={`${step.type}-${i}`} step={step} />
           ))}
           <div ref={scrollRef} />
         </div>

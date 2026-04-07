@@ -640,7 +640,7 @@ class TestLoginRateLimiting:
 
     def test_rate_limiter_blocks_after_max_attempts(self):
         """Nach N fehlgeschlagenen Versuchen wird die IP blockiert."""
-        from src.api.server import LoginRateLimiter
+        from src.api.rate_limit_login import LoginRateLimiter
 
         limiter = LoginRateLimiter(max_attempts=3)
         assert not limiter.is_blocked("10.0.0.1")
@@ -654,7 +654,7 @@ class TestLoginRateLimiting:
 
     def test_rate_limiter_reset_after_success(self):
         """Nach erfolgreichem Login wird der Zaehler zurueckgesetzt."""
-        from src.api.server import LoginRateLimiter
+        from src.api.rate_limit_login import LoginRateLimiter
 
         limiter = LoginRateLimiter(max_attempts=3)
         limiter.record_failure("10.0.0.2")
@@ -664,7 +664,7 @@ class TestLoginRateLimiting:
 
     def test_rate_limiter_isolates_ips(self):
         """Rate-Limiting ist pro IP isoliert."""
-        from src.api.server import LoginRateLimiter
+        from src.api.rate_limit_login import LoginRateLimiter
 
         limiter = LoginRateLimiter(max_attempts=2)
         limiter.record_failure("10.0.0.3")
@@ -674,7 +674,7 @@ class TestLoginRateLimiting:
 
     def test_login_returns_429_after_too_many_failures(self, no_auth_client):
         """Login liefert 429 nach zu vielen fehlgeschlagenen Versuchen."""
-        from src.api.server import get_rate_limiter
+        from src.api.rate_limit_login import get_rate_limiter
 
         # Rate-Limiter zuruecksetzen fuer diesen Test
         limiter = get_rate_limiter()

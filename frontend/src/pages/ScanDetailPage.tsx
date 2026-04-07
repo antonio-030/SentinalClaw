@@ -5,11 +5,12 @@ import { ArrowLeft, FileText, Download, Trash2, XCircle } from 'lucide-react';
 import { useScan } from '../hooks/useApi';
 import { api } from '../services/api';
 import { showToast } from '../components/shared/NotificationToast';
-import { SeverityBadge } from '../components/shared/SeverityBadge';
 import { StatusBadge } from '../components/shared/StatusBadge';
-import { CvssScore } from '../components/shared/CvssScore';
 import { formatDate } from '../utils/format';
-import type { Finding, OpenPort, ScanPhase, Severity } from '../types/api';
+import { PortsTab } from '../components/scan-detail/PortsTab';
+import { FindingsTab } from '../components/scan-detail/FindingsTab';
+import { ReportTab } from '../components/scan-detail/ReportTab';
+import type { ScanPhase } from '../types/api';
 
 type Tab = 'ports' | 'findings' | 'report';
 
@@ -109,7 +110,7 @@ export function ScanDetailPage() {
   }
 
   function handleDelete() {
-    if (window.confirm('Scan wirklich loeschen? Diese Aktion kann nicht rueckgaengig gemacht werden.')) {
+    if (window.confirm('Scan wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.')) {
       deleteMutation.mutate();
     }
   }
@@ -128,12 +129,12 @@ export function ScanDetailPage() {
 
   return (
     <div className="space-y-6 max-w-7xl">
-      {/* Back link */}
+      {/* Zurück-Link */}
       <Link to="/scans" className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors">
         <ArrowLeft size={14} /> Back to Scans
       </Link>
 
-      {/* Header card */}
+      {/* Header-Karte */}
       <div className="rounded-lg border border-border-subtle bg-bg-secondary p-5">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="space-y-1">
@@ -159,26 +160,24 @@ export function ScanDetailPage() {
               </button>
             )}
             <button onClick={handleDelete} disabled={deleteMutation.isPending} className="inline-flex items-center gap-1.5 rounded-md border border-severity-critical/30 bg-severity-critical/10 px-3 py-1.5 text-xs font-medium text-severity-critical hover:bg-severity-critical/20 transition-colors">
-              <Trash2 size={13} /> Scan loeschen
+              <Trash2 size={13} /> Scan löschen
             </button>
           </div>
         </div>
       </div>
 
-      {/* Phase Timeline */}
+      {/* Phasen-Timeline */}
       <div className="rounded-lg border border-border-subtle bg-bg-secondary p-5">
         <h2 className="text-sm font-semibold text-text-primary mb-4">Phase Timeline</h2>
         <div className="space-y-0">
           {phases.map((phase: ScanPhase, idx: number) => (
             <div key={phase.id} className="flex gap-4">
-              {/* Vertical line + icon */}
               <div className="flex flex-col items-center">
                 <span className="text-base leading-none">{phaseIcon(phase.status)}</span>
                 {idx < phases.length - 1 && (
                   <div className="w-px flex-1 bg-border-subtle my-1" />
                 )}
               </div>
-              {/* Content */}
               <div className="pb-4 min-w-0">
                 <p className="text-sm font-medium text-text-primary">
                   Phase {phase.phase_number}: {phase.name}
@@ -198,7 +197,7 @@ export function ScanDetailPage() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tab-Navigation */}
       <div className="flex items-center gap-1 p-1 rounded-lg bg-bg-secondary border border-border-subtle w-fit">
         {tabs.map((tab) => (
           <button
@@ -218,99 +217,10 @@ export function ScanDetailPage() {
         ))}
       </div>
 
-      {/* Tab content */}
-      {activeTab === 'ports' && (
-        <div className="rounded-lg border border-border-subtle bg-bg-secondary overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border-subtle text-left">
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Host</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Port</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Protocol</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Service</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Version</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle">
-                {open_ports.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-10 text-center text-xs text-text-tertiary">No open ports found</td>
-                  </tr>
-                )}
-                {open_ports.map((p: OpenPort, i: number) => (
-                  <tr key={`${p.host}-${p.port}-${i}`} className="hover:bg-bg-tertiary/30 transition-colors">
-                    <td className="px-5 py-3 font-mono text-xs text-text-primary">{p.host}</td>
-                    <td className="px-5 py-3 font-mono text-xs text-text-primary">{p.port}</td>
-                    <td className="px-5 py-3 text-xs text-text-secondary">{p.protocol}</td>
-                    <td className="px-5 py-3 text-xs text-text-secondary">{p.service ?? '--'}</td>
-                    <td className="px-5 py-3 text-xs text-text-secondary">{p.version ?? '--'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'findings' && (
-        <div className="rounded-lg border border-border-subtle bg-bg-secondary overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border-subtle text-left">
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Severity</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Title</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Host:Port</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">CVE</th>
-                  <th className="px-5 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider text-right">CVSS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle">
-                {findings.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-10 text-center text-xs text-text-tertiary">No findings for this scan</td>
-                  </tr>
-                )}
-                {findings.map((f: Finding) => (
-                  <tr
-                    key={f.id}
-                    className="hover:bg-bg-tertiary/30 transition-colors cursor-pointer"
-                    onClick={() => navigate(`/findings/${f.id}`)}
-                    tabIndex={0}
-                    role="link"
-                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/findings/${f.id}`); }}
-                  >
-                    <td className="px-5 py-3.5">
-                      <SeverityBadge severity={f.severity as Severity} />
-                    </td>
-                    <td className="px-5 py-3.5 text-sm text-text-primary max-w-xs truncate">{f.title}</td>
-                    <td className="px-5 py-3.5 font-mono text-xs text-text-secondary">
-                      {f.target_host}{f.target_port ? `:${f.target_port}` : ''}
-                    </td>
-                    <td className="px-5 py-3.5 font-mono text-xs text-text-secondary">{f.cve_id ?? '--'}</td>
-                    <td className="px-5 py-3.5 text-right">
-                      <CvssScore score={f.cvss_score} compact />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'report' && (
-        <div className="rounded-lg border border-border-subtle bg-bg-secondary p-5">
-          {reportHtml ? (
-            <pre className="text-sm text-text-secondary whitespace-pre-wrap font-mono p-4 bg-bg-primary rounded-lg border border-border-subtle overflow-x-auto">
-              {reportHtml}
-            </pre>
-          ) : (
-            <p className="text-xs text-text-tertiary">Click "Report generieren" to generate a technical report.</p>
-          )}
-        </div>
-      )}
+      {/* Tab-Inhalt — ausgelagerte Komponenten */}
+      {activeTab === 'ports' && <PortsTab openPorts={open_ports} />}
+      {activeTab === 'findings' && <FindingsTab findings={findings} />}
+      {activeTab === 'report' && <ReportTab reportHtml={reportHtml} />}
     </div>
   );
 }

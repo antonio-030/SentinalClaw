@@ -65,7 +65,7 @@ export function useChatMessages(isOpen: boolean) {
   // WebSocket: Live-Schritte des Agents empfangen
   useEffect(() => {
     wsOn('agent_step', (data) => {
-      const step = data as AgentStep;
+      const step = data as unknown as AgentStep;
       setAgentSteps(prev => {
         const updated = [...prev, step];
         agentStepsRef.current = updated;  // Ref synchron halten

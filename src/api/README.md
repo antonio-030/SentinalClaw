@@ -19,6 +19,7 @@ Finding-Verwaltung, DSGVO-Funktionen und Echtzeit-Kommunikation über WebSocket.
 | `scan_detail_routes.py` | Export, Compare, Report, Hosts, Ports, Phasen |
 | `finding_routes.py` | Finding-Verwaltung und -Abfragen |
 | `chat_routes.py` | Chat-Agent-Endpunkte |
+| `agent_report_routes.py` | CRUD für Agent-Reports |
 | `approval_routes.py` | Genehmigungsworkflow für Eskalationsstufen 3/4 |
 | `settings_routes.py` | Systemweite Einstellungen über die Web-UI |
 | `gdpr_routes.py` | DSGVO: Datenexport, Löschung, Consent |

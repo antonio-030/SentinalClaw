@@ -26,7 +26,7 @@ const HEARTBEAT_INTERVAL_MS = 30000;
 export function useWebSocket(): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<WsEvent, EventHandler>>(new Map());
-  const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [connected, setConnected] = useState(false);
 
   const connect = useCallback(() => {

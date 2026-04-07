@@ -6,7 +6,7 @@
 
 > KI-gestützte Security Assessment Platform — angetrieben von [NVIDIA NemoClaw](https://docs.nvidia.com/nemoclaw/latest/), OpenClaw und Claude
 
-Self-hosted Penetrationstest-Plattform mit autonomen Agenten, Kernel-Level-Sandbox-Isolation und einer 8-Schichten-Sicherheitsarchitektur. Kombiniert die Sicherheitsgarantien von NemoClaw mit einem vollständigen Pentest-Arsenal (47 Tools, Stufe 0-4) und einer Web-UI mit 57 konfigurierbaren Einstellungen.
+Self-hosted Penetrationstest-Plattform mit autonomen Agenten, Kernel-Level-Sandbox-Isolation und einer 8-Schichten-Sicherheitsarchitektur. Kombiniert die Sicherheitsgarantien von NemoClaw mit einem vollständigen Pentest-Arsenal (47 Tools, Stufe 0-4) und einer Web-UI mit 56 konfigurierbaren Einstellungen.
 
 ![SentinelClaw Dashboard mit Agent-Chat](docs/screenshots/dashboard-chat.png)
 
@@ -28,7 +28,7 @@ OpenClaw alleine gibt dem Agent **uneingeschränkten Shell-Zugriff** (`Bash(*)`)
 | **Eskalationskontrolle** | Keine | 5-Stufen-System mit Genehmigungspflicht ab Stufe 3 |
 | **Forbidden Actions** | Keine | DoS, Ransomware, Massen-Exfiltration immer blockiert |
 | **Kill-Switch** | Keiner | 4 unabhängige Kill-Pfade (<1s bis <5s) |
-| **Konfiguration** | Code-Änderung nötig | 57 Settings über Web-UI, kein Code nötig |
+| **Konfiguration** | Code-Änderung nötig | 56 Settings über Web-UI, kein Code nötig |
 | **DSGVO** | Nicht vorhanden | Datenexport, Cascade-Löschung, Retention, Consent |
 
 **Kurzfassung:** OpenClaw ist der Motor. NemoClaw ist die Sicherheitshülle. SentinelClaw ist das Cockpit.
@@ -144,12 +144,23 @@ Vorinstalliert im Docker-Image: 23 Tools. Weitere 24 über Web-UI (Einstellungen
 | Feature | Status | Details |
 |---|---|---|
 | **DSGVO-Compliance** | Implementiert | Datenexport (Art.15), Cascade-Löschung (Art.17), Retention, Consent, AVV-Warnung |
-| **Multi-Tenancy** | Implementiert | Organisationen, org_id auf allen Tabellen, RBAC |
+| **Multi-Tenancy** | Schema-ready | Organisationen, org_id auf allen Tabellen — Row-Level-Enforcement noch nicht aktiv |
 | **Prometheus Monitoring** | Implementiert | GET /metrics — 8 Metrik-Familien |
 | **Auto-Backup** | Implementiert | SQLite VACUUM INTO bei jedem Start, Retention konfigurierbar |
 | **Passwort-Policy** | Implementiert | 10+ Zeichen, Groß/Klein, Zahl, Sonderzeichen, Blockliste |
-| **57 UI-Settings** | Implementiert | 11 Kategorien, Boolean-Toggles, NemoClaw-Doku-Links |
+| **56 UI-Settings** | Implementiert | 11 Kategorien, Boolean-Toggles, NemoClaw-Doku-Links |
 | **Security Headers** | Implementiert | CSP, HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy |
+
+---
+
+## Enterprise-Readiness — Offene Punkte
+
+| Bereich | Status | Details |
+|---|---|---|
+| **Frontend-Tests** | Nicht vorhanden | Kein Test-Runner konfiguriert, 0 Frontend-Tests. Empfehlung: Vitest + @testing-library einrichten |
+| **Approval-Flow UI** | Backend fertig, UI-Integration fehlt | Backend-Endpoints und Service vollständig (`approval_routes.py`, `approval_service.py`), aber kein UI-Rendering im Chat |
+| **Multi-Tenancy Enforcement** | Schema-ready | `organization_id` auf allen Tabellen (Migration 12-13), aber Row-Level-Filtering in Repositories noch nicht aktiv |
+| **PostgreSQL Produktion** | Code vorhanden, nicht CI-getestet | Dual-Backend (`asyncpg` + `aiosqlite`), aber keine Integrations-Tests mit PostgreSQL |
 
 ---
 
@@ -228,14 +239,14 @@ Alle Einstellungen über Umgebungsvariablen (`SENTINEL_`-Präfix) **oder** die W
 | `SENTINEL_SESSION_INACTIVITY_MINUTES` | `30` | Auto-Logout bei Inaktivität |
 | `SENTINEL_LLM_MAX_TOKENS_PER_SCAN` | `50000` | Token-Budget pro Scan |
 
-Vollständige Liste: siehe `.env.example` und Web-UI → Einstellungen (57 Optionen in 11 Kategorien)
+Vollständige Liste: siehe `.env.example` und Web-UI → Einstellungen (56 Optionen in 11 Kategorien)
 
 ---
 
 ## Tests
 
 ```bash
-# 298 Unit-Tests
+# 289 Unit-Tests
 .venv/bin/python -m pytest tests/unit/ -v
 
 # E2E-Tests (Scan, Kill-Switch, Scope)
@@ -254,7 +265,7 @@ cd frontend && npx tsc --noEmit
 
 ```
 src/
-├── api/            # FastAPI REST-API (17 Route-Dateien, system_routes.py, gdpr_routes.py, org_routes.py)
+├── api/            # FastAPI REST-API (20 Route-Dateien, system_routes.py, gdpr_routes.py, org_routes.py)
 ├── agents/         # NemoClaw Runtime, Chat-Agent, LLM-Provider, Token-Tracker
 ├── orchestrator/   # Scan-Orchestrierung (Multi-Phase, 4 Phasen)
 ├── shared/         # DB, Auth, Config, Scope-Validator, Kill-Switch, DSGVO, Backup, Settings

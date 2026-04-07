@@ -4,11 +4,11 @@ Authentifizierungs-Routen für die SentinelClaw REST-API.
 Endpoints unter /api/v1/auth:
   - POST /auth/login            -> Benutzer-Login (öffentlich, MFA-fähig)
   - POST /auth/register         -> Benutzer anlegen (nur system_admin)
+  - POST /auth/change-password  -> Eigenes Passwort ändern
+  - POST /auth/logout           -> Serverseitiges Logout
   - GET  /auth/me               -> Aktuellen Benutzer abrufen
-  - GET  /auth/users            -> Alle Benutzer auflisten (org_admin+)
-  - DELETE /auth/users/{id}     -> Benutzer löschen (nur system_admin)
-  - PUT  /auth/users/{id}/role  -> Rolle ändern (org_admin+)
 
+Benutzerverwaltung (users) befindet sich in user_management_routes.py.
 MFA-Endpoints befinden sich in mfa_routes.py.
 """
 
@@ -18,7 +18,6 @@ from pydantic import BaseModel
 
 from src.api.cookie_auth import clear_auth_cookies, set_auth_cookies
 from src.shared.auth import (
-    ROLES,
     UserRepository,
     create_access_token,
     create_mfa_session_token,
@@ -52,11 +51,6 @@ class RegisterRequest(BaseModel):
     password: str
 
 
-class ChangeRoleRequest(BaseModel):
-    """Anfrage zum Ändern der Benutzer-Rolle."""
-    role: str
-
-
 class ChangePasswordRequest(BaseModel):
     """Anfrage zum Ändern des eigenen Passworts."""
     old_password: str
@@ -86,6 +80,57 @@ def _require_role(user: dict, required_role: str) -> None:
         )
 
 
+def _check_rate_limit(request: Request) -> None:
+    """Prüft ob die Client-IP durch Rate-Limiting blockiert ist."""
+    from src.api.rate_limit_login import get_rate_limiter
+
+    client_ip = request.client.host if request.client else "unknown"
+    limiter = get_rate_limiter()
+
+    if limiter.is_blocked(client_ip):
+        logger.warning("Login-Rate-Limit erreicht", ip=client_ip)
+        raise HTTPException(
+            429,
+            "Zu viele fehlgeschlagene Login-Versuche. Bitte warte 5 Minuten.",
+        )
+
+
+def _build_mfa_response(user: dict) -> dict:
+    """Erstellt die MFA-Antwort mit temporärem Session-Token."""
+    mfa_session = create_mfa_session_token(
+        user["id"], user["email"], user["role"]
+    )
+    logger.info("MFA erforderlich", email=user["email"])
+    return {
+        "token": "",
+        "user": {},
+        "mfa_required": True,
+        "mfa_session": mfa_session,
+    }
+
+
+def _build_login_response(user: dict) -> JSONResponse:
+    """Erstellt die vollständige Login-Antwort mit Auth-Cookies."""
+    token, jti = create_access_token(user["id"], user["email"], user["role"])
+    csrf_token = generate_csrf_token()
+    logger.info("Benutzer eingeloggt", email=user["email"], role=user["role"])
+
+    response = JSONResponse(content={
+        "token": "",
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "display_name": user["display_name"],
+            "role": user["role"],
+        },
+        "mfa_required": False,
+        "mfa_session": "",
+        "must_change_password": user.get("must_change_password", False),
+    })
+    set_auth_cookies(response, token, csrf_token)
+    return response
+
+
 # ─── Endpoints ────────────────────────────────────────────────────
 
 
@@ -97,18 +142,12 @@ async def login(request: Request, body: LoginRequest) -> dict:
     zurückgegeben, mit dem der zweite Faktor verifiziert werden muss.
     Rate-Limited: Max. N fehlgeschlagene Versuche pro IP in 5 Minuten.
     """
-    from src.api.server import get_rate_limiter
+    from src.api.rate_limit_login import get_rate_limiter
 
-    # Client-IP für Rate-Limiting extrahieren
+    _check_rate_limit(request)
+
     client_ip = request.client.host if request.client else "unknown"
     limiter = get_rate_limiter()
-
-    if limiter.is_blocked(client_ip):
-        logger.warning("Login-Rate-Limit erreicht", ip=client_ip)
-        raise HTTPException(
-            429,
-            "Zu viele fehlgeschlagene Login-Versuche. Bitte warte 5 Minuten.",
-        )
 
     db = await _get_db()
     repo = UserRepository(db)
@@ -130,37 +169,11 @@ async def login(request: Request, body: LoginRequest) -> dict:
 
     # MFA-Prüfung: Wenn aktiviert, noch keinen vollwertigen Token ausgeben
     if user.get("mfa_enabled"):
-        mfa_session = create_mfa_session_token(
-            user["id"], user["email"], user["role"]
-        )
-        logger.info("MFA erforderlich", email=user["email"])
-        return {
-            "token": "",
-            "user": {},
-            "mfa_required": True,
-            "mfa_session": mfa_session,
-        }
+        return _build_mfa_response(user)
 
     # Kein MFA — direkt vollwertigen Token als HttpOnly Cookie ausgeben
     await repo.update_last_login(user["id"])
-    token, jti = create_access_token(user["id"], user["email"], user["role"])
-    csrf_token = generate_csrf_token()
-    logger.info("Benutzer eingeloggt", email=user["email"], role=user["role"])
-
-    response = JSONResponse(content={
-        "token": "",
-        "user": {
-            "id": user["id"],
-            "email": user["email"],
-            "display_name": user["display_name"],
-            "role": user["role"],
-        },
-        "mfa_required": False,
-        "mfa_session": "",
-        "must_change_password": user.get("must_change_password", False),
-    })
-    set_auth_cookies(response, token, csrf_token)
-    return response
+    return _build_login_response(user)
 
 
 @router.post("/register")
@@ -270,69 +283,3 @@ async def get_current_user(request: Request) -> dict:
         "last_login_at": user["last_login_at"],
         "created_at": user["created_at"],
     }
-
-
-@router.get("/users")
-async def list_users(request: Request) -> list[dict]:
-    """Listet alle Benutzer auf (nur für org_admin oder höher)."""
-    caller = _extract_user_from_request(request)
-    _require_role(caller, "org_admin")
-
-    db = await _get_db()
-    repo = UserRepository(db)
-    return await repo.list_all()
-
-
-@router.delete("/users/{user_id}")
-async def delete_user(user_id: str, request: Request) -> dict:
-    """Löscht einen Benutzer (nur für system_admin)."""
-    caller = _extract_user_from_request(request)
-    _require_role(caller, "system_admin")
-
-    db = await _get_db()
-    repo = UserRepository(db)
-
-    user = await repo.get_by_id(user_id)
-    if not user:
-        raise HTTPException(404, f"Benutzer '{user_id}' nicht gefunden")
-
-    # Selbstlöschung verhindern
-    if caller["sub"] == user_id:
-        raise HTTPException(400, "Eigenes Konto kann nicht gelöscht werden")
-
-    await repo.delete(user_id)
-    return {"status": "deleted", "user_id": user_id}
-
-
-@router.put("/users/{user_id}/role")
-async def change_role(user_id: str, body: ChangeRoleRequest, request: Request) -> dict:
-    """Ändert die Rolle eines Benutzers (nur für org_admin oder höher)."""
-    caller = _extract_user_from_request(request)
-    _require_role(caller, "org_admin")
-
-    if body.role not in ROLES:
-        raise HTTPException(
-            400,
-            f"Ungültige Rolle '{body.role}' — erlaubt: {list(ROLES.keys())}",
-        )
-
-    db = await _get_db()
-    repo = UserRepository(db)
-
-    user = await repo.get_by_id(user_id)
-    if not user:
-        raise HTTPException(404, f"Benutzer '{user_id}' nicht gefunden")
-
-    # Nur höhere Rollen dürfen niedrigere Rollen vergeben
-    if not role_has_permission(caller["role"], body.role):
-        raise HTTPException(403, "Kann keine Rolle vergeben die höher ist als die eigene")
-
-    await repo.update_role(user_id, body.role)
-    logger.info(
-        "Benutzer-Rolle geändert",
-        user_id=user_id,
-        old_role=user["role"],
-        new_role=body.role,
-        changed_by=caller["sub"],
-    )
-    return {"status": "updated", "user_id": user_id, "role": body.role}
