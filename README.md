@@ -1,178 +1,148 @@
 # SentinelClaw
 
-> KI-gestützte Security Assessment Platform — angetrieben von NVIDIA NemoClaw, OpenClaw und Claude
+<p align="center">
+  <img src="docs/screenshots/nvidia-logo.png" alt="NVIDIA" height="40" />
+</p>
 
-Self-hosted Penetrationstest-Plattform mit autonomen Agenten, Kernel-Level-Sandbox-Isolation und einer 8-Schichten-Sicherheitsarchitektur. Läuft lokal mit Python 3.12+, React, Docker und SQLite.
+> KI-gestützte Security Assessment Platform — angetrieben von [NVIDIA NemoClaw](https://docs.nvidia.com/nemoclaw/latest/), OpenClaw und Claude
+
+Self-hosted Penetrationstest-Plattform mit autonomen Agenten, Kernel-Level-Sandbox-Isolation und einer 8-Schichten-Sicherheitsarchitektur. Kombiniert die Sicherheitsgarantien von NemoClaw mit einem vollständigen Pentest-Arsenal (47 Tools, Stufe 0-4) und einer Web-UI mit 57 konfigurierbaren Einstellungen.
 
 ![SentinelClaw Dashboard mit Agent-Chat](docs/screenshots/dashboard-chat.png)
 
-*Dashboard mit Sicherheitsschichten (8/8 aktiv), System-Health, Findings und Agent-Chat — Re-Test-Bericht für techlogia.de*
+*Dashboard mit 8/8 Sicherheitsschichten aktiv, System-Health, Findings und Agent-Chat — Re-Test-Bericht für techlogia.de*
 
 ---
 
-## Wie SentinelClaw mit NemoClaw und OpenClaw arbeitet
+## Warum NemoClaw und nicht OpenClaw alleine?
 
-SentinelClaw nutzt **NVIDIA NemoClaw** als Agent-Runtime. NemoClaw bündelt drei Kernkomponenten:
+OpenClaw alleine gibt dem Agent **uneingeschränkten Shell-Zugriff** (`Bash(*)`). Das reicht für Entwicklung, aber **nicht für ein Firmenumfeld**. SentinelClaw nutzt NemoClaw als Sicherheitsmantel um OpenClaw:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  NemoClaw (NVIDIA Agent-Runtime)                            │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  OpenClaw — Agent-Runtime + Multi-Agent-Orchestrierung│  │
-│  │  Der "sentinelclaw" Agent wird hier ausgeführt.       │  │
-│  │  Claude als LLM-Backend, Bash(*) als Tool.            │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  OpenShell — Kernel-Level Sandbox-Isolation            │  │
-│  │  Landlock LSM + Seccomp BPF + Network Namespaces      │  │
-│  │  SSH-Proxy für isolierte Agent-Ausführung              │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
+| | OpenClaw alleine | SentinelClaw + NemoClaw |
+|---|---|---|
+| **Shell-Zugriff** | `Bash(*)` — alles erlaubt | Bash-Allowlist — nur freigegebene Binaries |
+| **Tool-Installation** | Agent kann `pip install` frei ausführen | Blockiert — nur Admin über Web-UI |
+| **Sandbox-Isolation** | Keine (läuft auf dem Host) | [OpenShell Kernel-Isolation](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) (Landlock + seccomp) |
+| **Netzwerk** | Uneingeschränkt | [Deny-by-Default Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html) |
+| **Credential-Schutz** | API-Keys im Prozess sichtbar | [Credential-Isolation](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) — Keys nie in der Sandbox |
+| **Eskalationskontrolle** | Keine | 5-Stufen-System mit Genehmigungspflicht ab Stufe 3 |
+| **Forbidden Actions** | Keine | DoS, Ransomware, Massen-Exfiltration immer blockiert |
+| **Kill-Switch** | Keiner | 4 unabhängige Kill-Pfade (<1s bis <5s) |
+| **Konfiguration** | Code-Änderung nötig | 57 Settings über Web-UI, kein Code nötig |
+| **DSGVO** | Nicht vorhanden | Datenexport, Cascade-Löschung, Retention, Consent |
 
-### Der Scan-Flow im Detail
+**Kurzfassung:** OpenClaw ist der Motor. NemoClaw ist die Sicherheitshülle. SentinelClaw ist das Cockpit.
 
-Wenn ein Scan gestartet wird (Web-UI oder CLI), passiert folgendes:
-
-```
-Benutzer startet Scan (Web-UI / CLI)
-    │
-    ▼
-┌────────────────────────────────────────────────────────────┐
-│  SentinelClaw API  (FastAPI, POST /api/v1/scans)          │
-│  → Erstellt Scan-Job in der Datenbank                     │
-│  → Startet Background-Task                                │
-└────────────────────┬───────────────────────────────────────┘
-                     │
-                     ▼
-┌────────────────────────────────────────────────────────────┐
-│  Orchestrator-Agent (FA-01)                                │
-│  → Erstellt Scan-Plan (mindestens 2 Phasen)               │
-│  → Koordiniert die Phasen-Ausführung                      │
-│  → Sammelt Ergebnisse, erstellt Executive Summary          │
-└────────────────────┬───────────────────────────────────────┘
-                     │
-          ┌──────────┼──────────┬──────────────┐
-          ▼          ▼          ▼              ▼
-    ┌──────────┐┌──────────┐┌──────────┐┌──────────┐
-    │ Phase 1  ││ Phase 2  ││ Phase 3  ││ Phase 4  │
-    │ Host     ││ Port-    ││ Vuln-    ││ Analyse  │
-    │ Discovery││ Scan     ││ Scan     ││ & Report │
-    └────┬─────┘└────┬─────┘└────┬─────┘└────┬─────┘
-         │           │           │            │
-         └─────┬─────┘           │            │
-               │                 │            │
-               ▼                 ▼            ▼
-┌────────────────────────────────────────────────────────────┐
-│  NemoClaw Runtime  (nemoclaw_runtime.py)                   │
-│                                                            │
-│  Für JEDE Phase:                                           │
-│  1. Baut SSH-Kommando:                                     │
-│     ssh -o ProxyCommand="openshell ssh-proxy               │
-│         --gateway-name nemoclaw                             │
-│         --name my-assistant"                                │
-│         sandbox@openshell-my-assistant                      │
-│                                                            │
-│  2. Führt OpenClaw Agent in der Sandbox aus:               │
-│     openclaw run                                           │
-│         --agent sentinelclaw                                │
-│         --system-prompt-file /sandbox/AGENT.md              │
-│         --tools bash                                        │
-│         --output text                                       │
-│         -p "[Analysiere diese nmap-Ergebnisse...]"          │
-│                                                            │
-│  3. Claude (OpenClaw) analysiert den Prompt:                │
-│     → Entscheidet autonom welche Bash-Befehle nötig sind   │
-│     → Führt nmap/nuclei/curl über Bash-Tool aus            │
-│     → Parst die Ergebnisse                                 │
-│     → Gibt strukturierte Analyse zurück                    │
-└────────────────────┬───────────────────────────────────────┘
-                     │
-                     ▼
-┌────────────────────────────────────────────────────────────┐
-│  OpenShell Sandbox  (Kernel-Level-Isolation)               │
-│                                                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Landlock LSM      → Dateisystem-Zugriff beschränkt  │  │
-│  │  Seccomp BPF       → Syscall-Filter aktiv            │  │
-│  │  Network Namespaces → Nur Whitelist-Ziele erreichbar │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                            │
-│  Darin läuft:                                              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Docker Sandbox-Container                             │  │
-│  │  cap_drop: ALL | nur NET_RAW für nmap                │  │
-│  │  read_only: true | non-root User (scanner)            │  │
-│  │  PID-Limit: 256 | Memory: 2GB | CPU: 2.0             │  │
-│  │                                                       │  │
-│  │  Tools: nmap 7.80, nuclei 3.3.7, curl, dig, whois    │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
-```
-
-### Der Chat-Agent (separater Pfad)
-
-Der Agent-Chat in der Web-UI nutzt denselben NemoClaw-Stack, aber mit einem Tool-Loop:
-
-```
-Chat-UI → POST /api/v1/chat → Chat-Agent (ask_agent)
-    │
-    ▼
-NemoClaw Runtime → SSH → OpenShell → openclaw run --agent sentinelclaw
-    │
-    ├─ Agent antwortet mit Tool-Markern (```tool bash nmap -sV ...)
-    │   → execute_scan_command() → docker exec → Sandbox
-    │   → Ergebnis zurück an Agent
-    │
-    ├─ Agent analysiert Ergebnis, ruft ggf. weitere Tools auf
-    │   (Loop: maximal 15 Iterationen)
-    │
-    └─ Agent gibt finale Antwort (Markdown) → WebSocket → UI
-```
+> Dokumentation: [docs.nvidia.com/nemoclaw](https://docs.nvidia.com/nemoclaw/latest/) | [Security Best Practices](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) | [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/deployment/sandbox-hardening.html) | [Network Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html) | [CLI-Referenz](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html)
 
 ---
 
-## Features
+## Wie SentinelClaw arbeitet
 
-### Scan-Pipeline
-- **Orchestrator-Agent** — Plant und koordiniert mehrphasige Scans (Host Discovery → Port-Scan → Vuln-Assessment → Analyse)
-- **4-Phasen-Scan** — Jede Phase ist ein eigenständiger OpenClaw-Agent-Aufruf mit eigener DB-Persistenz
-- **Agent-Chat** — Interaktiver Chat mit dem Security-Agent, autonome Tool-Aufrufe in der Sandbox
-- **7 Scan-Profile** — Quick, Standard, Full, Web, Datenbank, Infrastruktur, Stealth (+ eigene Profile erstellen)
-
-### Sicherheitsarchitektur (8 Schichten)
+### Architektur-Überblick
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ 8. Auth & RBAC       JWT, bcrypt, 5 Rollen, MFA (TOTP)     │
-│ 7. Audit-Logging     Append-Only, kein DELETE, unveränderbar│
-│ 6. Kill Switch       4 Pfade: App, Container, Netzwerk, OS │
-│ 5. Netzwerk-Isolation  sentinel-internal, sentinel-scanning │
-│ 4. Docker Sandbox    cap_drop ALL, read-only, non-root      │
-│ 3. Input-Validierung Shell-Metazeichen, PII-Masking         │
-│ 2. Scope-Validator   7 Checks vor jedem Tool-Aufruf         │
-│ 1. NemoClaw Runtime  OpenClaw + OpenShell + Landlock/seccomp│
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  SentinelClaw Web-UI (React + TypeScript)                       │
+│  Dashboard, Scans, Findings, Reports, Chat, Einstellungen       │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ HTTPS + WebSocket (HttpOnly Cookies)
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  SentinelClaw API  (FastAPI, Python 3.12+)                      │
+│  Auth (JWT+CSRF) │ RBAC (5 Rollen) │ Rate-Limiting │ Audit     │
+│  8 Sicherheitsschichten müssen ALLE aktiv sein                  │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ SSH über OpenShell Proxy
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  NVIDIA NemoClaw  (Agent-Runtime)                               │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  OpenClaw — Agent mit Bash-Allowlist (NICHT Bash(*))      │  │
+│  │  Claude als LLM │ sentinelclaw Agent │ Tool-Bridge        │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  OpenShell — Kernel-Level Sandbox                         │  │
+│  │  Landlock LSM │ Seccomp BPF │ Network Namespaces          │  │
+│  │  cap_drop ALL │ read-only FS │ Credential-Isolation       │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ docker exec (parametrisiert, kein shell=True)
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Docker Sandbox-Container                                       │
+│  47 Tools (nmap, nuclei, metasploit, hydra, john, linpeas...)   │
+│  non-root │ PID-Limit │ Memory-Limit │ NET_RAW only             │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Web-UI (17 Seiten)
-- Dashboard mit animierter Security-Shield-Visualisierung
-- Live-Scan-Fortschritt mit Phasen-Tracking
-- Reports (Executive, Technisch, Compliance) als Markdown + PDF-Download
-- PDF-Reports mit Autorisierungsnachweis (§202a, §303b StGB)
-- Editierbare Einstellungen (Tool-Timeouts, Agent-Limits, Sandbox, LLM)
-- Profil-Management (Builtin + Custom)
-- Whitelist-Verwaltung mit Bestätigungstypen
-- Agent-Chat mit Syntax-Highlighting und WebSocket
-- Approval-System für Eskalationsstufe 3+ (Exploitation)
-- Monitoring, Audit-Log, Findings, Export (CSV/JSONL/SARIF)
+### Der Scan-Flow
 
-### LLM-Provider
-- **Claude** (Anthropic) — Standard-Provider via OpenClaw/CLI oder API
-- **Azure OpenAI** — DSGVO-konform, Daten bleiben in der EU
-- **Ollama** — Self-Hosted, maximale Datensouveränität
+1. **Benutzer startet Scan** (Web-UI oder CLI) mit Ziel und Profil
+2. **API prüft alle 8 Sicherheitsschichten** — Scan wird blockiert wenn eine fehlt
+3. **Orchestrator erstellt Plan** (mindestens 2 Phasen: Recon → Vuln-Assessment)
+4. **Bei Eskalationsstufe 3+**: Approval-Request an Admin — Scan pausiert bis genehmigt
+5. **NemoClaw Runtime** verbindet per SSH → OpenShell → OpenClaw Sandbox
+6. **Agent (Claude) arbeitet autonom**: Wählt Tools, führt Befehle aus, analysiert Ergebnisse
+7. **Scope-Validator prüft jeden Tool-Aufruf** (8 Checks: Target, Port, Eskalation, Zeitfenster, Forbidden Actions...)
+8. **Ergebnisse**: Findings in DB → Findings-Seite, Reports als Markdown + PDF, Audit-Log
+
+### Der Chat-Agent
+
+Der Agent-Chat in der Web-UI nutzt denselben NemoClaw-Stack:
+
+- Benutzer schreibt Nachricht → Agent entscheidet autonom welche Tools er nutzt
+- Agent kann scannen, analysieren, Reports erstellen — alles in der Sandbox
+- Gefundene Schwachstellen werden automatisch als Findings extrahiert und auf der Findings-Seite angezeigt
+- Tool-Aufrufe werden als aufklappbare Log-Einträge unter der Agent-Antwort angezeigt
+- Approval-Cards erscheinen wenn der Agent Stufe 3+ Tools nutzen will
+
+---
+
+## 8-Schichten-Sicherheitsarchitektur
+
+Kein Scan und kein Agent-Aufruf wird ausgeführt wenn nicht **alle 8 Schichten aktiv** sind:
+
+| # | Schicht | Was sie schützt | Konfigurierbar über |
+|---|---|---|---|
+| 1 | **NemoClaw Runtime** | Kernel-Isolation (Landlock, seccomp, Namespaces) | Einstellungen → NemoClaw |
+| 2 | **Scope-Validator** | 8 Checks vor jedem Tool-Aufruf | Scan-Profile + Whitelist |
+| 3 | **Input-Validierung** | Shell-Injection, XSS, Binary-Allowlist | Einstellungen → Agent |
+| 4 | **Docker Sandbox** | Container-Härtung (cap_drop, read-only, non-root) | Einstellungen → Sandbox |
+| 5 | **Netzwerk-Isolation** | Nur Whitelist-Ziele erreichbar | docker-compose.yml |
+| 6 | **Kill-Switch** | 4 unabhängige Stop-Pfade (<1s bis <5s) | Web-UI (roter Button) |
+| 7 | **Audit-Logging** | Unveränderliches Append-Only Protokoll | Automatisch |
+| 8 | **Auth & RBAC** | JWT HttpOnly Cookies, CSRF, MFA, 5 Rollen | Einstellungen → Sicherheit |
+
+---
+
+## Pentest-Arsenal (47 Tools)
+
+| Stufe | Name | Tools | Genehmigung |
+|---|---|---|---|
+| 0 | **Passiv** (OSINT) | curl, dig, whois, shodan, censys, theHarvester, sublist3r, dnspython, holehe | Automatisch |
+| 1 | **Aktiv** (Recon) | nmap, dirb, sslscan, netcat, socat, wafw00f, sslyze, arjun, dirsearch | Automatisch |
+| 2 | **Vulnerability** | nuclei, nikto, wapiti, python-nmap, pyjwt | Automatisch |
+| 3 | **Exploitation** | hydra, john, hashcat, metasploit, sqlmap, impacket, crackmapexec, pwncat | **Admin-Genehmigung** |
+| 4 | **Post-Exploitation** | linpeas, chisel | **Admin-Genehmigung** |
+
+Vorinstalliert im Docker-Image: 23 Tools. Weitere 24 über Web-UI (Einstellungen → Agent Tools) installierbar.
+
+---
+
+## Enterprise-Features
+
+| Feature | Status | Details |
+|---|---|---|
+| **DSGVO-Compliance** | Implementiert | Datenexport (Art.15), Cascade-Löschung (Art.17), Retention, Consent, AVV-Warnung |
+| **Multi-Tenancy** | Implementiert | Organisationen, org_id auf allen Tabellen, RBAC |
+| **Prometheus Monitoring** | Implementiert | GET /metrics — 8 Metrik-Familien |
+| **Auto-Backup** | Implementiert | SQLite VACUUM INTO bei jedem Start, Retention konfigurierbar |
+| **Passwort-Policy** | Implementiert | 10+ Zeichen, Groß/Klein, Zahl, Sonderzeichen, Blockliste |
+| **57 UI-Settings** | Implementiert | 11 Kategorien, Boolean-Toggles, NemoClaw-Doku-Links |
+| **Security Headers** | Implementiert | CSP, HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy |
 
 ---
 
@@ -183,7 +153,7 @@ NemoClaw Runtime → SSH → OpenShell → openclaw run --agent sentinelclaw
 | Python | 3.12+ | Mit `venv`-Unterstützung |
 | Node.js | 20+ | Für das Frontend |
 | Docker Desktop | 20.10+ | Muss laufen bevor Scans gestartet werden |
-| NemoClaw / OpenShell | Aktuell | OpenClaw + OpenShell installiert |
+| [NVIDIA NemoClaw](https://docs.nvidia.com/nemoclaw/latest/) | Aktuell | OpenClaw + OpenShell installiert |
 | Git | 2.30+ | Für Repository-Klonen |
 
 ---
@@ -211,7 +181,7 @@ docker compose build sandbox
 docker compose up -d sandbox
 
 # 6. Backend starten (Port 3001)
-python -m uvicorn src.api.server:app --host 0.0.0.0 --port 3001
+.venv/bin/uvicorn src.api.server:app --host 0.0.0.0 --port 3001
 
 # 7. Frontend starten (Port 5173) — in neuem Terminal
 cd frontend && npm run dev
@@ -219,10 +189,38 @@ cd frontend && npm run dev
 
 Öffne `http://localhost:5173` — Login: `admin@sentinelclaw.local` / `admin`
 
-### Scan über CLI
+(Passwort muss bei erstem Login geändert werden — Enterprise Passwort-Policy)
+
+---
+
+## Konfiguration
+
+Alle Einstellungen über Umgebungsvariablen (`SENTINEL_`-Präfix) **oder** die Web-UI (Einstellungen-Seite). Änderungen über die UI wirken sofort und werden im Audit-Log protokolliert.
+
+| Variable | Default | Beschreibung |
+|---|---|---|
+| `SENTINEL_LLM_PROVIDER` | `claude-abo` | Provider: `claude-abo`, `claude`, `azure`, `ollama` |
+| `SENTINEL_ALLOWED_TARGETS` | *(leer)* | Komma-separierte Scan-Ziele |
+| `SENTINEL_JWT_SECRET` | *(dev-default)* | JWT-Signatur-Secret (in Produktion setzen!) |
+| `SENTINEL_TOKEN_EXPIRE_MINUTES` | `60` | JWT-Token-Lebensdauer |
+| `SENTINEL_SESSION_INACTIVITY_MINUTES` | `30` | Auto-Logout bei Inaktivität |
+| `SENTINEL_LLM_MAX_TOKENS_PER_SCAN` | `50000` | Token-Budget pro Scan |
+
+Vollständige Liste: siehe `.env.example` und Web-UI → Einstellungen (57 Optionen in 11 Kategorien)
+
+---
+
+## Tests
 
 ```bash
-python -m src.cli orchestrate --target scanme.nmap.org --ports 22,80,443 --yes
+# 253 Unit-Tests
+.venv/bin/python -m pytest tests/unit/ -v
+
+# E2E-Tests (Scan, Kill-Switch, Scope)
+.venv/bin/python -m pytest tests/e2e/ -v
+
+# Frontend TypeScript-Check
+cd frontend && npx tsc --noEmit
 ```
 
 ---
@@ -231,135 +229,21 @@ python -m src.cli orchestrate --target scanme.nmap.org --ports 22,80,443 --yes
 
 ```
 src/
-├── api/                              # FastAPI REST-API (11 Route-Dateien)
-│   ├── server.py                     # App-Setup, Health, Kill, WebSocket
-│   ├── scan_routes.py                # Scan CRUD + Background-Executor
-│   ├── scan_detail_routes.py         # Export, Compare, Report, PDF
-│   ├── chat_routes.py                # Agent-Chat + WebSocket-Push
-│   ├── auth_routes.py                # Login, Register, RBAC
-│   ├── mfa_routes.py                 # MFA Setup/Verify/Login
-│   ├── settings_routes.py            # Einstellungen + Profile CRUD
-│   ├── approval_routes.py            # Eskalations-Genehmigungen
-│   ├── whitelist_routes.py           # Autorisierte Scan-Ziele
-│   ├── kill_verification_routes.py   # Kill-Verifikation (5 Checks)
-│   ├── websocket_manager.py          # WS-Verbindungsmanager
-│   └── agent_tool_routes.py          # Tool-Installation in Sandbox
-│
-├── agents/
-│   ├── nemoclaw_runtime.py           # NemoClaw Runtime (SSH → OpenShell → OpenClaw)
-│   ├── chat_agent.py                 # Chat-Agent mit Tool-Loop
-│   ├── llm_provider.py               # Provider-Factory (Claude/Azure/Ollama)
-│   ├── azure_provider.py             # Azure OpenAI Provider
-│   ├── ollama_provider.py            # Ollama Provider
-│   ├── scan_executor.py              # docker exec Wrapper
-│   └── recon/                        # Recon-Agent Prompts + Parser
-│
-├── orchestrator/
-│   ├── agent.py                      # Orchestrator-Agent (FA-01)
-│   ├── multi_phase.py                # 4-Phasen-Koordination
-│   └── phases/                       # Host Discovery, Port-Scan, Vuln, SSL, Analyse
-│
-├── shared/
-│   ├── kill_switch.py                # Kill-Switch (4 Pfade)
-│   ├── network_kill.py               # Netzwerk-Kill (iptables)
-│   ├── os_kill.py                    # OS-Level Process-Kill
-│   ├── scope_validator.py            # 7 Scope-Checks
-│   ├── sanitizer.py                  # PII-Masking, Input-Sanitizing
-│   ├── database.py                   # SQLite (14 Tabellen)
-│   ├── auth.py                       # JWT + RBAC + MFA
-│   ├── mfa.py                        # TOTP-Funktionen
-│   ├── report_generator.py           # Markdown-Reports
-│   ├── pdf_generator.py              # PDF-Reports mit Autorisierung
-│   └── settings_service.py           # Gecachter Settings-Layer
-│
-├── sandbox/
-│   └── executor.py                   # Docker-Sandbox-Executor
-│
-└── watchdog/
-    ├── service.py                    # Watchdog-Prozess
-    └── scope_checks.py              # Scope-Violation-Erkennung
+├── api/            # FastAPI REST-API (17 Route-Dateien, system_routes.py, gdpr_routes.py, org_routes.py)
+├── agents/         # NemoClaw Runtime, Chat-Agent, LLM-Provider, Token-Tracker
+├── orchestrator/   # Scan-Orchestrierung (Multi-Phase, 4 Phasen)
+├── shared/         # DB, Auth, Config, Scope-Validator, Kill-Switch, DSGVO, Backup, Settings
+├── sandbox/        # Docker-Sandbox-Executor
+├── watchdog/       # Unabhängiger Watchdog-Prozess
+├── mcp_server/     # MCP Tool-Bridge (port_scan, vuln_scan, exec_command)
+└── cli/            # CLI-Befehle
 
 frontend/src/
-├── pages/                            # 17 Seiten
-├── components/
-│   ├── chat/                         # ChatPanel, MarkdownRenderer, ApprovalCard
-│   ├── dashboard/                    # SecurityShield (animiert), SeverityChart
-│   ├── layout/                       # Sidebar, TopBar, AppLayout
-│   └── shared/                       # StatusBadge, MfaCodeInput, etc.
-├── hooks/                            # useApi, useWebSocket
-└── services/                         # API-Client
+├── pages/          # 19 Seiten (Dashboard, Scans, Findings, Reports, Settings, DSGVO, ...)
+├── components/     # Chat, Dashboard (SecurityShield), Layout, Reports
+├── hooks/          # useApi, useWebSocket
+└── services/       # API-Client mit Cookie-Auth + CSRF
 ```
-
----
-
-## Konfiguration
-
-Alle Einstellungen über Umgebungsvariablen (`SENTINEL_`-Präfix) oder die Web-UI (Einstellungen-Seite).
-
-| Variable | Default | Beschreibung |
-|---|---|---|
-| `SENTINEL_LLM_PROVIDER` | `claude-abo` | Provider: `claude-abo`, `claude`, `azure`, `ollama` |
-| `SENTINEL_ALLOWED_TARGETS` | *(leer)* | Komma-separierte Scan-Ziele |
-| `SENTINEL_JWT_SECRET` | *(dev-default)* | JWT-Signatur-Secret (in Produktion setzen!) |
-| `SENTINEL_SANDBOX_TIMEOUT` | `300` | Max. Tool-Laufzeit in Sekunden |
-| `SENTINEL_LLM_MAX_TOKENS_PER_SCAN` | `50000` | Token-Budget pro Scan |
-| `SENTINEL_LOG_LEVEL` | `INFO` | DEBUG, INFO, WARNING, ERROR |
-
-Vollständige Liste: siehe `.env.example`
-
----
-
-## Sicherheit
-
-### Kill-Switch (4 unabhängige Pfade)
-
-| Pfad | Methode | Latenz |
-|---|---|---|
-| 1. Application | Atomares Flag, alle Scans gestoppt | <1s |
-| 2. Container | Docker SIGKILL + Netzwerk-Disconnect | <3s |
-| 3. Netzwerk | iptables DROP auf Scan-Netzwerk | <1s |
-| 4. OS-Level | `kill -9` auf Scanner-Prozesse | <5s |
-
-Auslösbar über: Web-UI (roter Kill-Button), API (`POST /api/v1/kill`), CLI, Chat (`/kill`).
-
-Wiederherstellung über: Monitoring-Seite → "System wiederherstellen" Button.
-
-### Scope-Validator (7 Checks)
-
-Jeder Tool-Aufruf wird gegen 7 Regeln geprüft. Bei Verstoß → sofortige Blockierung:
-
-1. Target in Whitelist?
-2. Target nicht in Blacklist?
-3. Target nicht in verbotenen IP-Ranges?
-4. Port im erlaubten Bereich?
-5. Zeitfenster eingehalten?
-6. Eskalationsstufe erlaubt?
-7. Tool in Allowlist?
-
----
-
-## Tests
-
-```bash
-# Unit-Tests
-python -m pytest tests/unit/ -v
-
-# E2E-Tests (Scan, Kill-Switch, Scope)
-python -m pytest tests/e2e/ -v
-
-# Frontend TypeScript-Check
-cd frontend && npx tsc --noEmit
-```
-
----
-
-## CI/CD
-
-GitHub Actions Pipeline (`.github/workflows/ci.yml`):
-- **Lint** — Ruff + Black
-- **Test Backend** — pytest Unit-Tests
-- **Test Frontend** — TypeScript Build-Check
-- **Security** — pip-audit + npm audit
 
 ---
 
@@ -371,4 +255,4 @@ Proprietary — Alle Rechte vorbehalten.
 
 ## Autor
 
-**Jaciel Antonio Acea Ruiz**
+**Jaciel Antonio Acea Ruiz** — [Techlogia.de](https://techlogia.de)
