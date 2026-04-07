@@ -60,19 +60,26 @@ OpenClaw alleine gibt dem Agent **uneingeschränkten Shell-Zugriff** (`Bash(*)`)
 │                                                                 │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  OpenClaw — Agent mit Bash-Allowlist (NICHT Bash(*))      │  │
-│  │  Claude als LLM │ sentinelclaw Agent │ Tool-Bridge        │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                                                                 │
+│  │  Claude als LLM │ sentinelclaw Agent                      │  │
+│  └──────────────────────┬────────────────────────────────────┘  │
+│                         │ MCP-Protokoll (Tool-Aufrufe)           │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  OpenShell — Kernel-Level Sandbox                         │  │
 │  │  Landlock LSM │ Seccomp BPF │ Network Namespaces          │  │
 │  │  cap_drop ALL │ read-only FS │ Credential-Isolation       │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └────────────────────────┬────────────────────────────────────────┘
+                         │ MCP-Protokoll (SSE)
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  MCP-Server (sentinelclaw-mcp)                                  │
+│  Scope-Validator (8 Checks) │ Audit-Logging │ Timeout-Kontrolle │
+│  4 Tools: port_scan, vuln_scan, exec_command, parse_output      │
+└────────────────────────┬────────────────────────────────────────┘
                          │ docker exec (parametrisiert, kein shell=True)
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Docker Sandbox-Container                                       │
+│  Docker Sandbox-Container (sentinelclaw-sandbox)                │
 │  47 Tools (nmap, nuclei, metasploit, hydra, john, linpeas...)   │
 │  non-root │ PID-Limit │ Memory-Limit │ NET_RAW only             │
 └─────────────────────────────────────────────────────────────────┘
@@ -85,16 +92,16 @@ OpenClaw alleine gibt dem Agent **uneingeschränkten Shell-Zugriff** (`Bash(*)`)
 3. **Orchestrator erstellt Plan** (mindestens 2 Phasen: Recon → Vuln-Assessment)
 4. **Bei Eskalationsstufe 3+**: Approval-Request an Admin — Scan pausiert bis genehmigt
 5. **NemoClaw Runtime** verbindet per SSH → OpenShell → OpenClaw Sandbox
-6. **Agent (Claude) arbeitet autonom**: Wählt Tools, führt Befehle aus, analysiert Ergebnisse
-7. **Scope-Validator prüft jeden Tool-Aufruf** (8 Checks: Target, Port, Eskalation, Zeitfenster, Forbidden Actions...)
+6. **Agent (Claude) arbeitet autonom**: Ruft MCP-Tools auf (`port_scan`, `vuln_scan`, etc.)
+7. **MCP-Server validiert jeden Aufruf** (Scope-Validator: 8 Checks pro Tool-Call) und führt den Befehl in der Sandbox aus
 8. **Ergebnisse**: Findings in DB → Findings-Seite, Reports als Markdown + PDF, Audit-Log
 
 ### Der Chat-Agent
 
 Der Agent-Chat in der Web-UI nutzt denselben NemoClaw-Stack:
 
-- Benutzer schreibt Nachricht → Agent entscheidet autonom welche Tools er nutzt
-- Agent kann scannen, analysieren, Reports erstellen — alles in der Sandbox
+- Benutzer schreibt Nachricht → Agent entscheidet autonom welche MCP-Tools er aufruft
+- Agent kann scannen, analysieren, Reports erstellen — alle Tools laufen über den MCP-Server in der Sandbox
 - Gefundene Schwachstellen werden automatisch als Findings extrahiert und auf der Findings-Seite angezeigt
 - Tool-Aufrufe werden als aufklappbare Log-Einträge unter der Agent-Antwort angezeigt
 - Approval-Cards erscheinen wenn der Agent Stufe 3+ Tools nutzen will
@@ -190,9 +197,9 @@ cd frontend && npm run dev
 
 | Container | Funktion | Port |
 |---|---|---|
-| `sentinelclaw-mcp` | MCP-Server (Tool-Bridge) | 8081 |
-| `sentinelclaw-sandbox` | Pentest-Tools (nmap, nuclei) | — |
-| `sentinelclaw-watchdog` | Kill-Switch-Überwachung | — |
+| `sentinelclaw-mcp` | MCP-Server — der Agent ruft Tools ausschließlich über diesen Server auf. Validiert Scope, loggt Aufrufe, führt Befehle in der Sandbox aus | 8081 |
+| `sentinelclaw-sandbox` | Isolierter Container mit 47 Pentest-Tools (nmap, nuclei, etc.) — kein direkter Zugriff, nur über MCP-Server | — |
+| `sentinelclaw-watchdog` | Unabhängiger Überwachungsprozess — prüft Timeouts, Scope-Verletzungen und aktiviert Kill-Switch | — |
 
 ### Optionale Services
 
@@ -253,7 +260,7 @@ src/
 ├── shared/         # DB, Auth, Config, Scope-Validator, Kill-Switch, DSGVO, Backup, Settings
 ├── sandbox/        # Docker-Sandbox-Executor
 ├── watchdog/       # Unabhängiger Watchdog-Prozess
-├── mcp_server/     # MCP Tool-Bridge (port_scan, vuln_scan, exec_command)
+├── mcp_server/     # MCP-Server — einzige Schnittstelle zwischen Agent und Tools
 frontend/src/
 ├── pages/          # 19 Seiten (Dashboard, Scans, Findings, Reports, Settings, DSGVO, ...)
 ├── components/     # Chat, Dashboard (SecurityShield), Layout, Reports
